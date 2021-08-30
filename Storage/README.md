@@ -1,5 +1,8 @@
+## Description Script
+- The Script will bring the information of all BlockBlobs tiers and PageBlobs that you have in your Azure Storage Blob Service as well as the percentage that each Tier is occupying in your Azure Storage.
 
 ## Description Results
+
 - Percentagem - Total Percentage of BlockBlobTier in Azure Storage.
 - TotalSize - Total in KB of BlockBlobs in each Tier (Hot | Cool | Archive).
 - AccessTier - Respective Blockblob tier (Hot | Cool | Archive) Note: If the value is blank we are having PageBlobs in Azure Storage Blob service.
