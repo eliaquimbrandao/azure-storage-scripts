@@ -1,18 +1,16 @@
+# Enter Data and Declare Variables
+$subID = Read-Host "`n Enter your Subscription ID: "
+$rg = Read-Host "`n Enter the name of your Resource Group: "
+$sa = Read-Host "`n Enter the name of your Storage Account: "
+
 # Connect to Az  Account
 Connect-AzAccount
-
-# Declare SubscriptionID variable
-$subID = "MySubID"
 
 # Choose subscription
 Select-AzSubscription -SubscriptionId "$subID"
 
-# Declare variable Storage and Resource Group
-$strAccountName = "MyStorageAccounName"
-$strAccountRG = "MyRG"
-
 # Create Azure Storage Context
-$stCtx = New-AzStorageContext -StorageAccountName $strAccountName -StorageAccountKey ((Get-AzStorageAccountKey -ResourceGroupName $strAccountRG -Name $strAccountName).Value[0])
+$stCtx = New-AzStorageContext -StorageAccountName $sa -StorageAccountKey ((Get-AzStorageAccountKey -ResourceGroupName $rg -Name $sa).Value[0])
 
 # Fetch Containers
 $containers = Get-AzStorageContainer -Context $stCtx
