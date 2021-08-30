@@ -8,8 +8,9 @@ The following tools were used in this project:
 
 ## Additional information
 
-- Codes continued to be improved
-- I'm not an expert but I try my best :smile:
+- Codes continued to be improved.
+- I'll try to bring here Script to help with your Azure Infrastructure Automation.
+- I'm not an expert but I try my best :smile:.
 - If you want to contribute, you are always welcome.
 
 ## License
