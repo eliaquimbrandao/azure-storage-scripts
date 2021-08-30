@@ -1,4 +1,4 @@
-# powershell-scripts
+# azure-storage-scripts
 
 ## Technologies
 
