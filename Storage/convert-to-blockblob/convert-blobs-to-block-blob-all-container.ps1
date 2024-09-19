@@ -16,7 +16,7 @@ Write-Host "Subscription Name: $($currentContext.Subscription.Name)"
 # Define variables
 $resourceGroupName = "<YourResourceGroupName>"
 $storageAccountName = "<YourStorageAccountName>"
-$targetContainerName = "law-logs-block"  # Target container for block blobs
+$targetContainerName = "<YourTargetContainerName>"  # Target container for block blobs
 $reportFileName = "ConversionReport.csv"  # Name of the CSV report file
 
 # Suppress warnings
