@@ -30,9 +30,9 @@
    - **Blob Conversion**: <br>
      - **Non-Block Blobs**: Blobs that are not Block Blobs are downloaded, converted to Block Blobs, and re-uploaded to the target container. <br>
         - **Breakdown**: <br>
-            a. **Download**: The script first downloads the blob from the source container. This step brings the blob's data into the memory or temporary storage of the system where the script is running. <br>
-            b. **Convert**: After downloading, the blob is converted from its original type (such as Page Blob or Append Blob) to a Block Blob. The conversion process involves preparing the blob data in a format suitable for Block Blob storage. <br>
-            c. **Upload**: Once the conversion is complete, the script uploads the converted data to the specified target container as a Block Blob. <br>
+            - **Download**: The script first downloads the blob from the source container. This step brings the blob's data into the memory or temporary storage of the system where the script is running. <br>
+            - **Convert**: After downloading, the blob is converted from its original type (such as Page Blob or Append Blob) to a Block Blob. The conversion process involves preparing the blob data in a format suitable for Block Blob storage. <br>
+            - **Upload**: Once the conversion is complete, the script uploads the converted data to the specified target container as a Block Blob. <br>
 
    - **Processing Summary**: <br>
      - Logs tracks each blob’s status, detailing whether it was "Converted", "Copied", or "Failed". <br>
@@ -42,7 +42,7 @@
      - **Container**: The source container name. <br>
      - **BlobName**: The blob’s name. <br>
      - **Status**: The result of the operation (e.g., "Converted", "Copied", "Failed"). <br>
-   - **Report Upload**: The report is uploaded to the target container with defined name, if not, default it will be "ConversionReport.csv". <br>
+   - **Report Upload**: The report is uploaded to the target container with defined name, otherwise the default will be "ConversionReport.csv". <br>
 
 4. **Summary Output**:
    - **Containers Processed**: Lists all containers that were processed during the script execution. <br>
@@ -51,11 +51,19 @@
 
 ## Expected results Script convert-blobs-to-block-blob-law-container
 
-![Expected Results](https://user-images.githubusercontent.com/49751389/131340018-891f17ac-4e3b-4082-8daf-e08e1e9b17d4.png)
+![Expected Results](https://github.com/user-attachments/assets/73bf0771-8dd5-45d7-b00f-fc7a9ecbcf94)
 
 ## Expected results Script convert-blobs-to-block-blob-all-container
 
-> [!IMPORTANT]
-> Some numbers or GUIDs that do not correspond to container names or blob metadata may appear in the results. The source of these values is unclear, but they do not impact the conversion process. They may be related to information from the Azure API, but no effect on the final outcome has been observed.
+![Expected Results](https://github.com/user-attachments/assets/8b88330c-8784-4f3a-90a8-ee3d30616c84)
 
-![Expected Results](https://user-images.githubusercontent.com/49751389/131340018-891f17ac-4e3b-4082-8daf-e08e1e9b17d4.png)
+> [!NOTE]
+> Some numbers or GUIDs that do not correspond to container names may appear in the results. The source of these values is unclear, but they do not impact the conversion process. They may be related to information from the Azure API or blob metadata, but no effect on the final outcome has been observed.
+
+![Expected Results](https://github.com/user-attachments/assets/a67d1932-4b5a-4d9e-8c9b-e0ddac2567b7)
+
+## Expected results CSV report
+![Expected Results](https://github.com/user-attachments/assets/3252456c-4d50-41ac-b203-b1b731e0c5d2)
+
+> [!WARNING]
+> This code was developed with the assistance of artificial intelligence and is provided "as-is" without any warranties or guarantees. Although extensive testing has been performed with successful results, the author and any associated parties are not responsible for any direct or indirect damages, losses, or issues that may arise from the use or misuse of this code. It is the responsibility of the user to thoroughly review, test, and validate the code in their own environment before deploying it in a production setting. By using this code, you acknowledge that you assume all risks associated with its use.
