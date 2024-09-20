@@ -5,6 +5,11 @@
 > [!NOTE]
 > PageBlobs and Append Blobs do not support access tiers, so their access tier results will be blank.
 
+> [!IMPORTANT]
+> All testing of this code has been performed in a small environment with a low workload. As a result, the current implementation may not be optimized for handling high-speed or heavy workloads. Please keep this in mind if you plan to use it in larger environments.
+> 
+> If you have suggestions for improvements or encounter any issues, feel free to contribute or open a discussion. I will update the code as needed, and once optimized for higher workloads, this note will be removed.
+
 ## Detailed Operation
 
 - **Connects to Azure:** Uses the Subscription ID to connect and select the appropriate Azure subscription. <br>
