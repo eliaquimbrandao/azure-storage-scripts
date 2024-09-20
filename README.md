@@ -2,7 +2,7 @@
 
 ## Overview
 
-This repository is dedicated to providing PowerShell scripts designed to solve challenges in Azure that aren't easily addressed through the standard UI experience. The goal is to streamline Azure infrastructure task, offering solutions that improve efficiency, performance, and ease of management. 
+This repository is dedicated to providing PowerShell scripts designed to solve challenges in Azure that aren't easily addressed through the standard UI experience. The goal is to streamline Azure storage task.
 
 ## Technologies
 
@@ -22,8 +22,8 @@ Feel free to submit issues, suggest features, or contribute directly through pul
 
 ## Goals
 
-- Provide scripts that automate key Azure infrastructure tasks not easily accessible from the UI.
-- Foster an open community to brainstorm and develop creative solutions for Azure infrastructure automation.
+- Provide scripts that automate key Azure storage tasks not easily accessible from the UI.
+- Foster an open community to brainstorm and develop creative solutions for Azure storage automation.
 - Continually enhance the functionality and usability of the scripts provided.
 
 ## License
