@@ -8,6 +8,11 @@
 
 - This PowerShell script is designed to manage blob files in an Azure Storage Account. It specifically targets containers whose names start with "am-", which are part of the Log Analytics Workspace (LAW) export data process. The script converts non-Block Blob types (Page blobs and Append blobs) to Block Blobs and copies existing Block Blobs to a specified target container. Additionally, it generates a CSV report detailing the operations performed and uploads this report to the target container.
 
+> [!IMPORTANT]
+> All testing of this code has been performed in a small environment with a low workload. As a result, the current implementation may not be optimized for handling high-speed or heavy workloads. Please keep this in mind if you plan to use it in larger environments.
+> 
+> If you have suggestions for improvements or encounter any issues, feel free to contribute or open a discussion. I will update the code as needed, and once optimized for higher workloads, this note will be removed.
+
 ## Necessary Modifications
 
 - **Subscription ID**: Update the <mark>$desiredSubscriptionId</mark> variable with the appropriate subscription ID to ensure the script operates in the correct context. <br>
