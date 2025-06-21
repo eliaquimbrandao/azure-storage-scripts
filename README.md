@@ -1,29 +1,44 @@
 # azure-storage-scripts
 
-## Overview
+## 📌 Overview
 
-This repository is dedicated to providing PowerShell scripts designed to solve challenges in Azure that aren't easily addressed through the standard UI experience. The goal is to streamline Azure storage task.
+Welcome to **azure-storage-scripts** — a growing collection of automation scripts designed to tackle Azure storage challenges that are not easily handled through the standard UI experience. These scripts help simplify and streamline Azure storage operations, saving you time and effort.
 
-## Technologies
+## ⚙️ Technologies
 
-The following tools and technologies are utilized in this project:
+This repository leverages the following technologies to manage Azure Storage resources:
 
-- [Azure PowerShell](https://docs.microsoft.com/en-us/powershell/azure/?view=azps-6.3.0)
+- **Python** with the [Azure Storage File Share client library](https://learn.microsoft.com/en-us/azure/storage/files/storage-python-how-to-use-file-storage?tabs=python) to manage Azure File Share.
+- **Azure PowerShell** with the [Az.Storage module](https://learn.microsoft.com/en-us/powershell/module/az.storage/?view=azps-latest) to manage Azure Blob Storage.
 
-## Collaboration & Contribution
+For more details on Python, visit [python.org](https://www.python.org/). For Azure File Share d
 
-I am always working to improve these scripts, expand their functionality and bring new scripts for new needs. **Your ideas and contributions are highly encouraged** whether you're experienced in Azure PowerShell or just getting started, there's always room for growth and creativity. Let's collaborate to solve challenges that haven’t yet been solved with the UI and make managing Azure resources easier for everyone.
+## 🤝 Collaboration & Contribution
 
-Feel free to submit issues, suggest features, or contribute directly through pull requests.
+This is an evolving project, and community collaboration is at its core. Whether you’re a seasoned Azure engineer or just starting your automation journey, your ideas, improvements, and feedback are invaluable.
 
-## Goals
+✅ **How you can contribute:**
 
-- Provide scripts that automate key Azure storage tasks not easily accessible from the UI.
-- Foster an open community to brainstorm and develop creative solutions for Azure storage automation.
-- Continually enhance the functionality and usability of the scripts provided.
+- Report issues or bugs
+- Suggest new features or improvements
+- Submit pull requests with your enhancements
 
-## License
+Let’s innovate together to make managing Azure storage simpler and more efficient for everyone.
 
-Made with :heart: by <a href="https://github.com/eliaquimbrandao" target="_blank">Eliaquim Brandao</a>
+## 🎯 Goals
 
-[MIT](https://choosealicense.com/licenses/mit/)
+- Automate Azure storage tasks that are cumbersome or unsupported in the portal.
+- Provide clear, reusable scripts for real-world scenarios in both PowerShell and Python.
+- Build an open community for sharing and evolving Azure automation ideas.
+
+## ⚠️ Disclaimer
+
+> [!WARNING]
+> **Disclaimer:**  
+> This codebase was developed with the assistance of artificial intelligence and is provided **“as-is”**, without warranties or guarantees of any kind. While extensive testing has yielded successful results, the author and contributors assume no responsibility for any direct or indirect damages, losses, or operational issues resulting from its use or misuse.  
+> **Users are solely responsible for thoroughly reviewing, testing, and validating these scripts in their own environments before deploying them in production. By using this code, you acknowledge and accept all associated risks.**
+
+## 📜 License
+
+Made with ❤️ by [Eliaquim Brandao](https://github.com/eliaquimbrandao)  
+Distributed under the [MIT License](https://choosealicense.com/licenses/mit/).

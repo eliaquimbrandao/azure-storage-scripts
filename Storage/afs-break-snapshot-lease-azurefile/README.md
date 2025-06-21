@@ -60,8 +60,8 @@ Before you dive in, ensure you have the following:
 1. **Clone the Repository**:
 
    ```bash
-   git clone https://github.com/your-username/azure-snapshot-lease-breaker.git
-   cd azure-snapshot-lease-breaker
+   git clone https://github.com/your-username/afs-snapshot-lease-breaker.git
+   cd afs-snapshot-lease-breaker
    ```
 
 2. **Install Python Dependencies**:
@@ -84,7 +84,7 @@ Run the script in one of three modes: interactive, with command-line arguments, 
 ### Interactive Mode
 
 ```bash
-python snapshot-break-lease.py
+python afs-snapshot-break-lease.py
 ```
 
 The script will prompt for:
@@ -98,7 +98,7 @@ The script will prompt for:
 ### Command-line Arguments
 
 ```bash
-python snapshot-break-lease.py \
+python afs-snapshot-break-lease.py \
   --account-name <storage_account_name> \
   --auth-method <key|entra_id> \
   --account-key <account_key> \
@@ -119,7 +119,7 @@ Set these variables to reduce prompts:
 Then run:
 
 ```bash
-python snapshot-break-lease.py
+python afs-snapshot-break-lease.py
 ```
 
 ## Authentication Methods
@@ -176,7 +176,7 @@ Snapshot                             Result
 
 We love community input! 🌟 Whether you’re a Python pro or just getting started with Azure, your contributions can make this tool even better. Here’s how you can help:
 
-- **Report Issues**: Found a bug? [Open an issue](https://github.com/your-username/azure-snapshot-lease-breaker/issues).
+- **Report Issues**: Found a bug? [Open an issue](https://github.com/eliaquimbrandao/azure-storage-scripts/issues).
 - **Suggest Features**: Have an idea? Share it with us!
 - **Submit Pull Requests**: Fork the repo and contribute code.
 
@@ -186,11 +186,11 @@ Let’s build a robust tool for Azure snapshot management together!
 
 Questions or feedback? Reach out:
 
-- **GitHub**: [Your GitHub Profile](https://github.com/your-username)
-- **LinkedIn**: [Your LinkedIn Profile](https://www.linkedin.com/in/your-profile)
+- **GitHub**: [Your GitHub Profile](https://github.com/eliaquimbrandao)
+- **LinkedIn**: [Your LinkedIn Profile](https://www.linkedin.com/in/eliaquim/)
 
 ## License
 
-Made with ❤️ by [Your Name](https://github.com/your-username)
+Made with ❤️ by [Eliaquim Brandao](https://github.com/eliaquimbrandao)  
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](https://choosealicense.com/licenses/mit/).
