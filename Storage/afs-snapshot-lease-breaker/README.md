@@ -85,7 +85,7 @@ Run the script in interactive mode or provide arguments directly via the command
 ### Interactive Mode
 
 ```bash
-python afs-snapshot-break-lease.py
+python afs-snapshot-lease-breaker.py
 ```
 
 The script will prompt for any missing required information:
@@ -101,7 +101,7 @@ The script will prompt for any missing required information:
 You can provide all necessary parameters directly as command-line arguments for non-interactive execution:
 
 ```bash
-python afs-snapshot-break-lease.py \
+python afs-snapshot-lease-breaker.py \
   --account <storage_account_name> \
   --auth <1|2> \
   --key <account_key> \
