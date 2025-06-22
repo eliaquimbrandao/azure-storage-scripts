@@ -133,6 +133,25 @@ However, during testing, it has been observed that the **Storage File Data Privi
 
 To follow the principle of least privilege, assign these roles only at the **specific storage account** or **resource group** level, and avoid broader scopes whenever possible.
 
+## Security Considerations
+
+### Recommendation: Use Entra ID
+
+For optimal security, it is **strongly recommended** to use the Entra ID authentication method (`--auth 2`) whenever possible. This approach has several advantages:
+
+- It avoids handling sensitive storage account keys directly.
+- Authentication is handled through a secure, interactive browser login flow managed by Azure.
+- It aligns with modern security best practices of using identity-based access over shared secrets.
+
+### Account Key Risks
+
+If you must use the Account Key method (`--auth 1`), be aware of the following security risks:
+
+- **Command-Line Exposure**: Providing the key via the `--key <account_key>` argument is **not recommended**. This may expose the key in your shell's history file and make it visible in your system's process list.
+- **Interactive Prompt**: The script has been updated to use a secure interactive prompt that hides the key as it is typed and prevents it from being saved in your shell's history. If you must use the Account Key method, always use the interactive prompt instead of the `--key` argument.
+
+To minimize risk, always prefer Entra ID authentication and ensure the identity has only the necessary permissions, as described in the [Permissions](#permissions) section.
+
 ## Example Output
 
 Here’s what you can expect when running the script:
