@@ -161,6 +161,8 @@ else:
     cred = InteractiveBrowserCredential() 
     svc = ShareServiceClient(f"https://{account}.file.core.windows.net", credential=cred, token_intent="backup") 
 
+<<<<<<< HEAD
+=======
 # === Validate Credentials and Share Existence ===
 while True:
     try:
@@ -209,6 +211,7 @@ while True:
         logging.error(f"Unexpected error during validation: {e}", exc_info=True)
         sys.exit(1)
 
+>>>>>>> 044ace3 (updating project)
 # === Process Snapshots ===
 cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 print(f"🔍 Checking snapshots for '{share}' older than {days} days...\n")
