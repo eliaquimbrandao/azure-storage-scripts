@@ -161,57 +161,6 @@ else:
     cred = InteractiveBrowserCredential() 
     svc = ShareServiceClient(f"https://{account}.file.core.windows.net", credential=cred, token_intent="backup") 
 
-<<<<<<< HEAD
-=======
-# === Validate Credentials and Share Existence ===
-while True:
-    try:
-        # This single API call validates credentials, permissions, AND share existence.
-        svc.get_share_client(share).get_share_properties()
-        
-        print(f"✅ Credentials valid and file share '{share}' found. Proceeding...")
-        print()
-        break  # Success, exit the loop
-
-    except AzureSigningError:
-        # This is the clear message for an invalid key format.
-        print("\n❌ ERROR: Authentication failed. The provided Storage Account Key is not valid.")
-        print("A valid key is a Base64 string. Please copy it directly from the Azure Portal.")
-        logging.error("Authentication failed due to AzureSigningError, likely an invalid key format.")
-        sys.exit(1)
-
-    except HttpResponseError as e:
-        if e.status_code == 404:
-            print(f"\n❌ ERROR: The file share '{share}' was not found in the storage account '{account}'.")
-            print()
-            
-            # Loop to ask for a new name
-            while True:
-                share = input("Please enter an available file share name: ").strip()
-                print()
-                if share_re.fullmatch(share):
-                    break
-                print("Invalid share name format. Must be 3–63 chars, lowercase letters/numbers/hyphens, start/end alphanumeric.")
-                print()
-        
-        elif e.status_code == 403:
-            # This is the clearer message for a permissions issue.
-            print("\n❌ ERROR: Authorization failed (403 Forbidden).")
-            print("The key appears valid, but it does not have the required permissions for this storage account.")
-            logging.error(f"Authorization failed with 403 Forbidden: {e}")
-            sys.exit(1)
-
-        else:
-            print(f"\n❌ ERROR: An unexpected Azure error occurred (HTTP {e.status_code}). See log for details.")
-            logging.error(f"Azure error during validation: {e}")
-            sys.exit(1)
-            
-    except Exception as e:
-        print(f"\n❌ ERROR: An unexpected error occurred. See log for details: {e}")
-        logging.error(f"Unexpected error during validation: {e}", exc_info=True)
-        sys.exit(1)
-
->>>>>>> 044ace3 (updating project)
 # === Process Snapshots ===
 cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 print(f"🔍 Checking snapshots for '{share}' older than {days} days...\n")
