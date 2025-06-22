@@ -23,6 +23,7 @@ Built with **flexibility** and **ease of use** in mind, the script supports both
 - [Usage](#usage)
 - [Authentication Methods](#authentication-methods)
 - [Permissions](#permissions)
+- [Security Considerations](#security-considerations)
 - [Example Output](#example-output)
 - [Troubleshooting](#troubleshooting)
 - [Future Improvements](#future-improvements)
