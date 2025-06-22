@@ -169,7 +169,7 @@ Detailed log: C:\Users\username\snapshot-lease-breaker\error-log.20240622_143000
 - **HttpResponseError**: Check your credentials, ensure the identity has the correct permissions (see [Permissions](#permissions)), or verify the Azure service status.
 - **ModuleNotFoundError**: Ensure `azure-storage-file-share` and `azure-identity` are installed as per the [Installation](#installation) steps.
 - **Timestamp Parsing Issues**: The script handles various timestamp formats, but if issues persist, please report them.
-- **Detailed Errors**: For any failures, check the detailed log file specified at the end of the script's output (e.g., `Detailed log: C:\Users\username\snapshot-lease-breaker\error-log.YYYYMMDD_HHMMSS.log`).
+**Detailed Errors:** For any failures, check the detailed log file specified at the end of the script’s output (e.g., `Detailed log: /Users/username/snapshot-lease-breaker/error-log.YYYYMMDD_HHMMSS.log` on macOS/Linux, or `C:\Users\username\snapshot-lease-breaker\error-log.YYYYMMDD_HHMMSS.log` on Windows).
 
 ## Future Improvements
 
