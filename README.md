@@ -11,7 +11,7 @@ This repository leverages the following technologies to manage Azure Storage res
 - **Python** with the [Azure Storage File Share client library](https://learn.microsoft.com/en-us/azure/storage/files/storage-python-how-to-use-file-storage?tabs=python) to manage Azure File Share.
 - **Azure PowerShell** with the [Az.Storage module](https://learn.microsoft.com/en-us/powershell/module/az.storage/?view=azps-latest) to manage Azure Blob Storage.
 
-For more details on Python, visit [python.org](https://www.python.org/). For Azure File Share d
+For more details on Python, visit [python.org](https://www.python.org/).
 
 ## 🤝 Collaboration & Contribution
 
