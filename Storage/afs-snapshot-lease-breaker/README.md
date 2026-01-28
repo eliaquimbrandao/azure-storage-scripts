@@ -1,6 +1,6 @@
 # Azure File Share Snapshot Lease Breaker
 
-![Python](https://img.shields.io/badge/Python-3.6%2B-blue)
+![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
 ![Azure](https://img.shields.io/badge/Azure-Storage-blue)
 ![Azure SDK](https://img.shields.io/badge/Azure%20SDK-File%20Share-brightgreen)
 
@@ -18,6 +18,7 @@ Built with **flexibility** and **ease of use** in mind, the script supports both
 
 - [Features](#features)
 - [Technologies Used](#technologies-used)
+- [Dependencies](#dependencies)
 - [Getting Started - Prerequisites](#getting-started---prerequisites)
 - [Installation](#installation)
 - [Usage](#usage)
@@ -42,16 +43,24 @@ Built with **flexibility** and **ease of use** in mind, the script supports both
 
 ## Technologies Used
 
-- **[Python](https://www.python.org/)**: Core language for the script (version 3.6+).
+- **[Python](https://www.python.org/)**: Core language for the script (version 3.8–3.12).
 - **[Azure Storage File Share SDK](https://docs.microsoft.com/en-us/python/api/azure-storage-file-share/)**: Manages Azure File Shares and snapshots.
 - **[Azure Identity SDK](https://docs.microsoft.com/en-us/python/api/azure-identity/)**: Secure authentication via Entra ID.
 - **[Azure APIs](https://learn.microsoft.com/en-us/rest/api/storageservices/)**: RESTful APIs for interacting with Azure Storage.
+
+## Dependencies
+
+This script depends on the following Python packages (see requirements.txt):
+
+- azure-storage-file-share
+- azure-identity
+- azure-core
 
 ## Getting Started - Prerequisites
 
 Before you dive in, ensure you have the following:
 
-1. **Python 3.6+**: [Install Python](https://www.python.org/downloads/) if not already set up.
+1. **Python 3.8–3.12**: [Install Python](https://www.python.org/downloads/) if not already set up.
 2. **Azure Subscription**: An active Azure account with a Storage Account and File Shares containing snapshots.
 3. **Git**: [Install Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) to clone the repository.
 4. **Azure Permissions**: Ensure your account or identity has the necessary permissions as detailed in the [Permissions](#permissions) section.
@@ -68,7 +77,7 @@ Before you dive in, ensure you have the following:
 2. **Install Python Dependencies**:
 
     ```bash
-    pip install azure-storage-file-share azure-identity
+    pip install -r requirements.txt
     ```
 
 3. **Verify Installation**: Ensure Python and pip are installed:
@@ -84,8 +93,14 @@ Run the script in interactive mode or provide arguments directly via the command
 
 ### Interactive Mode
 
+**Windows (recommended):**
+
 ```bash
-python afs-snapshot-lease-breaker.py
+py -3.12 afs-snapshot-break-lease.py
+```
+
+```bash
+python afs-snapshot-break-lease.py
 ```
 
 The script will prompt for any missing required information:
@@ -101,7 +116,7 @@ The script will prompt for any missing required information:
 You can provide all necessary parameters directly as command-line arguments for non-interactive execution:
 
 ```bash
-python afs-snapshot-lease-breaker.py \
+python afs-snapshot-break-lease.py \
   --account <storage_account_name> \
   --auth <1|2> \
   --key <account_key> \
@@ -109,10 +124,67 @@ python afs-snapshot-lease-breaker.py \
   --days <retention_days>
 ```
 
+**Windows (recommended):**
+
+```bash
+py -3.12 afs-snapshot-break-lease.py \
+    --account <storage_account_name> \
+    --auth <1|2> \
+    --key <account_key> \
+    --share <file_share_name> \
+    --days <retention_days>
+```
+
 *Note*:
 
 - `--auth`: Use `1` for Account Key, `2` for Entra ID.
 - `--key`: This argument is only required if `--auth` is set to `1`.
+
+### Non-interactive / Automation Mode
+
+Use `--non-interactive` to fail fast if required values are missing (ideal for automation):
+
+```bash
+python afs-snapshot-break-lease.py --non-interactive --auth 2 --account <storage_account_name> --share <file_share_name> --days 30
+```
+
+**Windows (recommended):**
+
+```bash
+py -3.12 afs-snapshot-break-lease.py --non-interactive --auth 2 --account <storage_account_name> --share <file_share_name> --days 30
+```
+
+### Dry-run Mode
+
+Use `--dry-run` to list snapshots without breaking leases:
+
+```bash
+python afs-snapshot-break-lease.py --dry-run --auth 2 --account <storage_account_name> --share <file_share_name> --days 30
+```
+
+**Windows (recommended):**
+
+```bash
+py -3.12 afs-snapshot-break-lease.py --dry-run --auth 2 --account <storage_account_name> --share <file_share_name> --days 30
+```
+
+## Quick Start (Download Only)
+
+If you prefer to download and run without cloning the full repo, download the script and requirements file, then:
+
+**Windows (recommended):**
+
+```bash
+py -3.12 -m pip install -r requirements.txt
+py -3.12 afs-snapshot-break-lease.py
+```
+
+**Other OS:**
+
+```bash
+pip install -r requirements.txt
+python afs-snapshot-break-lease.py
+```
 
 ## Authentication Methods
 
