@@ -1,30 +1,58 @@
 import sys
 
 # =========================
-# Python Version Guard
+# Python Version Compatibility
 # =========================
+# Goal: keep the script runnable on "latest Python" *as long as* the Azure SDK
+# you install supports that Python version.
+#
+# - We enforce only a minimum version (3.8+) for language features used here.
+# - For newer Python versions, we warn (instead of hard failing).
 MIN_VERSION = (3, 8)
-MAX_TESTED_VERSION = (3, 12)
 
 current_major_minor = (sys.version_info.major, sys.version_info.minor)
 
-if current_major_minor < MIN_VERSION or current_major_minor > MAX_TESTED_VERSION:
+if current_major_minor < MIN_VERSION:
     print(
-        f"\n❌ Unsupported Python version detected: {sys.version.split()[0]}\n"
-        f"✔ Supported versions: Python 3.8 – 3.12\n\n"
-        f"👉 On Windows, run using:\n"
-        f"   py -3.12 afs-snapshot-break-lease.py\n"
+        f"\n❌ Python {sys.version.split()[0]} detected. This script requires Python {MIN_VERSION[0]}.{MIN_VERSION[1]}+.\n"
     )
     sys.exit(1)
+
+if current_major_minor >= (3, 13):
+    print(
+        f"\n⚠️  You are running Python {sys.version.split()[0]}.\n"
+        "This script is designed to be forward-compatible, but the Azure SDK wheels may lag behind brand-new Python releases.\n"
+        "If you hit install/import errors, use the newest Python version supported by the Azure SDK (often N-1), or try pre-release wheels.\n"
+    )
 
 import getpass
 import os
 import re
 import logging
 from logging.handlers import RotatingFileHandler
-from azure.storage.fileshare import ShareServiceClient, ShareLeaseClient
-from azure.identity import InteractiveBrowserCredential
-from azure.core.exceptions import HttpResponseError
+
+# =========================
+# Dependency Guard (friendly errors)
+# =========================
+try:
+    from azure.storage.fileshare import ShareServiceClient, ShareLeaseClient
+    from azure.identity import InteractiveBrowserCredential
+    from azure.core.exceptions import HttpResponseError
+except ModuleNotFoundError as e:
+    missing = str(e).split("No module named ")[-1].strip("'\"")
+    print(
+        "\n❌ Missing Python dependency.\n"
+        f"Missing module: {missing}\n\n"
+        "Install dependencies with:\n"
+        "  python -m pip install -r requirements.txt\n\n"
+        "If you are on a very new Python release and installation fails, try:\n"
+        "  python -m pip install --upgrade pip\n"
+        "  python -m pip install --pre -r requirements.txt\n\n"
+        "Or run the script using a supported Python version (example on Windows):\n"
+        "  py -3.12 -m pip install -r requirements.txt\n"
+        "  py -3.12 afs-snapshot-break-lease.py\n"
+    )
+    sys.exit(1)
 from datetime import datetime, timezone, timedelta
 import argparse
 
@@ -171,7 +199,17 @@ def build_service_client(auth, account, key, non_interactive):
         return ShareServiceClient(f"https://{account}.file.core.windows.net", credential=key)
 
     cred = InteractiveBrowserCredential()
-    return ShareServiceClient(f"https://{account}.file.core.windows.net", credential=cred, token_intent="backup")
+
+    # token_intent was added to support "backup" scenarios for some data-plane operations.
+    # To remain compatible across Azure SDK versions, fall back if the installed SDK doesn't support it.
+    try:
+        return ShareServiceClient(
+            f"https://{account}.file.core.windows.net",
+            credential=cred,
+            token_intent="backup",
+        )
+    except TypeError:
+        return ShareServiceClient(f"https://{account}.file.core.windows.net", credential=cred)
 
 
 def list_snapshots(svc, share, cutoff, log_path):
