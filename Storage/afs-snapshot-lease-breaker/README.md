@@ -21,33 +21,53 @@ Lists the snapshots of an Azure File Share, shows which ones are **leased**, and
     mkdir afs-lease-breaker && cd afs-lease-breaker
     BASE=https://raw.githubusercontent.com/eliaquimbrandao/azure-storage-scripts/main/Storage/afs-snapshot-lease-breaker
     curl -sSLO $BASE/afs-snapshot-break-lease.py -sSLO $BASE/requirements.txt
-    python3 -m pip install --user -r requirements.txt
+    python3 -m venv .venv && source .venv/bin/activate
+    python -m pip install -r requirements.txt
     ```
+
+    > Cloud Shell sessions time out. Next time, `cd afs-lease-breaker && source .venv/bin/activate` before running the script.
 
 3. Preview what the script would do. Nothing is changed:
 
     ```bash
-    python3 afs-snapshot-break-lease.py --dry-run --auth 4 --account <storage_account> --share <file_share> --days 30
+    python afs-snapshot-break-lease.py --dry-run --auth 4 --account <storage_account> --share <file_share> --days 30
     ```
 
 4. Run it for real. You'll be asked to confirm before any lease is broken:
 
     ```bash
-    python3 afs-snapshot-break-lease.py --auth 4 --account <storage_account> --share <file_share> --days 30
+    python afs-snapshot-break-lease.py --auth 4 --account <storage_account> --share <file_share> --days 30
     ```
 
 > `--auth 4` reuses your Cloud Shell sign-in. If that fails, use `--auth 3` (device code) or `--auth 1` (account key).
+> Your identity needs the roles listed under [Permissions](#permissions).
+> If the storage account blocks public network access or uses a firewall, Cloud Shell won't be able to reach it. In that case, run the script from a machine that is allowed on the storage account's network.
 
 ## Quick start (your own machine)
 
 Requires Python 3.8 or later.
 
+**macOS / Linux**
+
 ```bash
 git clone https://github.com/eliaquimbrandao/azure-storage-scripts.git
 cd azure-storage-scripts/Storage/afs-snapshot-lease-breaker
-python -m pip install -r requirements.txt       # Windows: py -3 -m pip install -r requirements.txt
-python afs-snapshot-break-lease.py              # Windows: py -3 afs-snapshot-break-lease.py
+python3 -m venv .venv && source .venv/bin/activate
+python -m pip install -r requirements.txt
+python afs-snapshot-break-lease.py --dry-run
 ```
+
+**Windows (PowerShell)**
+
+```powershell
+git clone https://github.com/eliaquimbrandao/azure-storage-scripts.git
+cd azure-storage-scripts\Storage\afs-snapshot-lease-breaker
+py -3 -m venv .venv; .\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python afs-snapshot-break-lease.py --dry-run
+```
+
+No Git? Download `afs-snapshot-break-lease.py` and `requirements.txt` from this folder, then run the same commands, starting from the `venv` step.
 
 If you run it with no arguments, the script asks for everything it needs: the sign-in method, storage account, file share and cutoff in days.
 
@@ -95,11 +115,28 @@ Entra ID (options 2–4) is recommended over account keys.
 
 ## Permissions
 
-- **Account key (`--auth 1`):** needs the storage account key. Getting the key requires `Microsoft.Storage/storageAccounts/listKeys/action`, which is included in *Storage Account Contributor*.
-- **Entra ID (`--auth 2/3/4`):** start with **Storage File Data Privileged Contributor** on the storage account.
-  In testing, some lease operations weren't allowed with this role alone. If you get `AuthorizationPermissionMismatch` or `403` errors, use **Storage Account Contributor** or the account key method instead.
+The script uses three operations: *List Shares*, *Get Share Properties* and *Lease Share* (break).
 
-Assign roles at the **storage account** level (least privilege). Role assignments can take a few minutes to apply.
+**Account key (`--auth 1`)** — the key grants full access to the storage account. To read the key in the portal or CLI, you need `Microsoft.Storage/storageAccounts/listKeys/action`, which is included in **Storage Account Contributor**.
+
+**Entra ID (`--auth 2`, `3`, `4`)** — the identity needs these permissions on the storage account:
+
+| Permission | Used for |
+|---|---|
+| `Microsoft.Storage/storageAccounts/fileServices/shares/read` | List Shares, Get Share Properties |
+| `Microsoft.Storage/storageAccounts/fileServices/shares/lease/action` | Break the lease |
+
+These are **management (control-plane) actions**, not data actions. Data roles such as *Storage File Data Privileged Contributor* don't include them, so that role alone isn't enough. Assign one of:
+
+- **Storage Account Contributor**. This built-in role includes both actions. It is broad, so scope it to the single storage account.
+- A **custom role** with only the two actions above. This is the least-privilege option.
+
+Also assign **Storage File Data Privileged Contributor** on the same storage account. Microsoft's guidance for Azure Files OAuth over REST asks for a data role alongside the management permissions, and having it avoids `403` errors.
+
+Entra ID access to share-level operations requires Azure Files REST API version `2024-11-04` or later. `requirements.txt` pins `azure-storage-file-share>=12.18.0`, which is the first release that uses it.
+Role assignments can take a few minutes to apply.
+
+References: [Permissions for calling Azure Files operations](https://learn.microsoft.com/rest/api/storageservices/authorize-with-azure-active-directory#permissions-for-calling-data-operations) · [Azure Files OAuth over REST](https://learn.microsoft.com/azure/storage/files/authorize-oauth-rest)
 
 ## Example output
 
@@ -136,7 +173,8 @@ Detailed log: /home/user/snapshot-lease-breaker/error-log.20240622_143000.log
 |---|---|
 | `File share '<name>' was not found` | Check the storage account and share names. Both are lowercase |
 | `Authentication failed` | Try a different `--auth` method. In Cloud Shell, use `4` or `3` |
-| `HttpResponseError` / `403` | Check [Permissions](#permissions), the storage account firewall and private endpoints (your IP or network must be allowed) |
+| `AuthorizationPermissionMismatch` / `403` | The identity is missing a permission. See [Permissions](#permissions). A firewall or private endpoint can also block you: your IP or network must be allowed |
+| `externally-managed-environment` from pip | Use a virtual environment (`python3 -m venv .venv`), as shown in the quick start |
 | `ModuleNotFoundError` | Run `python -m pip install -r requirements.txt`. On a very new Python release, use the latest version the Azure SDK supports |
 | Lease break `FAILED` | See the log file for the exact error |
 
