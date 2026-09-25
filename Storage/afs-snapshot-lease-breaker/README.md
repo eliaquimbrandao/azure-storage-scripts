@@ -12,7 +12,46 @@ Lists the snapshots of an Azure File Share, shows which ones are **leased**, and
 > Check which snapshots you need first, and **always start with `--dry-run`**.
 > This script is provided as-is, without warranty. See [Disclaimer](#disclaimer).
 
-## Quick start (Azure Cloud Shell — nothing to install locally)
+Two versions are included. Both do the same job, so pick whichever suits you:
+
+| | PowerShell ([`Break-AfsSnapshotLease.ps1`](Break-AfsSnapshotLease.ps1)) | Python ([`afs-snapshot-break-lease.py`](afs-snapshot-break-lease.py)) |
+|---|---|---|
+| Best for | **Simplest option.** Windows, or Azure Cloud Shell (PowerShell) | macOS, Linux, or automation |
+| Requires | Az.Storage module (already in Cloud Shell) | Python 3.8+ and pip packages |
+
+## PowerShell quick start
+
+1. Open [Azure Cloud Shell](https://shell.azure.com) in **PowerShell** mode. On your own machine, run `Install-Module Az.Storage -Scope CurrentUser` once instead.
+2. Download the script:
+
+    ```powershell
+    Invoke-WebRequest https://raw.githubusercontent.com/eliaquimbrandao/azure-storage-scripts/main/Storage/afs-snapshot-lease-breaker/Break-AfsSnapshotLease.ps1 -OutFile Break-AfsSnapshotLease.ps1
+    ```
+
+3. Preview what would change. `-WhatIf` breaks nothing:
+
+    ```powershell
+    ./Break-AfsSnapshotLease.ps1 -StorageAccount <storage_account> -Share <file_share> -OlderThanDays 30 -WhatIf
+    ```
+
+4. Run it. You're asked to confirm each lease; answer `A` for *Yes to All*:
+
+    ```powershell
+    ./Break-AfsSnapshotLease.ps1 -StorageAccount <storage_account> -Share <file_share> -OlderThanDays 30
+    ```
+
+| Parameter | Description |
+|---|---|
+| `-StorageAccount`, `-Share` | Storage account and file share names (required) |
+| `-OlderThanDays <n>` | Only snapshots older than *n* days. Default `0` targets all leased snapshots |
+| `-UseEntraId` | Sign in with Entra ID instead of being prompted for the account key. Needs the roles in [Permissions](#permissions) |
+| `-Environment` | Sovereign cloud, e.g. `AzureUSGovernment` or `AzureChinaCloud` |
+| `-WhatIf` / `-Confirm:$false` | Dry run / skip the prompts |
+
+> On Windows, if you get *"running scripts is disabled"*, run `Set-ExecutionPolicy -Scope Process Bypass` first, then run the script again.
+> Full help: `Get-Help ./Break-AfsSnapshotLease.ps1 -Full`.
+
+## Python quick start (Azure Cloud Shell — nothing to install locally)
 
 1. Open [Azure Cloud Shell](https://shell.azure.com) (Bash).
 2. Download the script and install its dependencies:
@@ -43,7 +82,7 @@ Lists the snapshots of an Azure File Share, shows which ones are **leased**, and
 > Your identity needs the roles listed under [Permissions](#permissions).
 > If the storage account blocks public network access or uses a firewall, Cloud Shell won't be able to reach it. In that case, run the script from a machine that is allowed on the storage account's network.
 
-## Quick start (your own machine)
+## Python quick start (your own machine)
 
 Requires Python 3.8 or later.
 
