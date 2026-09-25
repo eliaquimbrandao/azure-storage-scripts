@@ -1,291 +1,151 @@
 # Azure File Share Snapshot Lease Breaker
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
-![Azure](https://img.shields.io/badge/Azure-Storage-blue)
-![Azure SDK](https://img.shields.io/badge/Azure%20SDK-File%20Share-brightgreen)
-
-![Status](https://img.shields.io/badge/Status-Active%20Development-orange)
+![Azure](https://img.shields.io/badge/Azure-Files-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellowgreen)
-![Contributions](https://img.shields.io/badge/Contributions-Welcome-brightgreen)
 
-## Overview
+Lists the snapshots of an Azure File Share, shows which ones are **leased**, and breaks those leases so the snapshots can be deleted. The Azure portal can't break snapshot leases, so you have to do it through the API. This script does that for you.
 
-Welcome to the **Azure File Share Snapshot Lease Breaker**! 🎉 This Python script simplifies the management of Azure File Share snapshots by identifying and breaking leases on snapshots that are either older than a specified retention period or locked and leased. This tool is perfect for automating cleanup tasks, ensuring your storage account remains tidy and manageable, and ultimately contributing to **cost-effective** Azure storage management.
+> [!WARNING]
+> Leases on file share snapshots are usually held by **Azure Backup** to protect recovery points.
+> Breaking a lease lets that snapshot be deleted, and the matching restore point may stop working.
+> Check which snapshots you need first, and **always start with `--dry-run`**.
+> This script is provided as-is, without warranty. See [Disclaimer](#disclaimer).
 
-Built with **flexibility** and **ease of use** in mind, the script supports both Azure Storage Account Key and Entra ID (Azure AD) authentication, interactive prompts, and clear output to keep you informed every step of the way. Whether you're a cloud admin or a developer, this script makes snapshot lease management a breeze! 🚀
+## Quick start (Azure Cloud Shell — nothing to install locally)
 
-## Table of Contents
-
-- [Features](#features)
-- [Technologies Used](#technologies-used)
-- [Dependencies](#dependencies)
-- [Getting Started - Prerequisites](#getting-started---prerequisites)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Authentication Methods](#authentication-methods)
-- [Permissions](#permissions)
-- [Security Considerations](#security-considerations)
-- [Example Output](#example-output)
-- [Troubleshooting](#troubleshooting)
-- [Future Improvements](#future-improvements)
-- [Collaboration & Contribution](#collaboration--contribution)
-- [Contact](#contact)
-- [License](#license)
-
-## Features
-
-- 🔒 **Dual Authentication**: Choose between Azure Storage Account Key or Entra ID (Azure AD) with InteractiveBrowserCredential.
-- 🕰️ **Retention-Based Cleanup**: Automatically targets snapshots older than a user-defined retention period, helping to reduce unnecessary storage costs.
-- 🔧 **Lease Management**: Optionally breaks leases on newer snapshots that are locked and leased, with user confirmation.
-- 📥 **Interactive Prompts**: User-friendly input collection for account details, file share name, and retention period if not provided via command-line arguments.
-- 📊 **Clear Reporting**: Displays a table of snapshots with lease status and a summary of lease-breaking results.
-- 🛡️ **Robust Error Handling & Logging**: Gracefully handles Azure service errors and unexpected issues, logging detailed information to a rotating file.
-
-## Technologies Used
-
-- **[Python](https://www.python.org/)**: Core language for the script (version 3.8+). Tested on 3.8–3.12; designed to be forward-compatible.
-- **[Azure Storage File Share SDK](https://docs.microsoft.com/en-us/python/api/azure-storage-file-share/)**: Manages Azure File Shares and snapshots.
-- **[Azure Identity SDK](https://docs.microsoft.com/en-us/python/api/azure-identity/)**: Secure authentication via Entra ID.
-- **[Azure APIs](https://learn.microsoft.com/en-us/rest/api/storageservices/)**: RESTful APIs for interacting with Azure Storage.
-
-## Dependencies
-
-This script depends on the following Python packages (see requirements.txt):
-
-- azure-storage-file-share
-- azure-identity
-- azure-core
-
-## Getting Started - Prerequisites
-
-Before you dive in, ensure you have the following:
-
-1. **Python 3.8+**: [Install Python](https://www.python.org/downloads/) if not already set up. (If you're on a brand-new Python release and the Azure SDK wheels aren't available yet, use the newest Python version supported by the Azure SDK — often N-1.)
-2. **Azure Subscription**: An active Azure account with a Storage Account and File Shares containing snapshots.
-3. **Git**: [Install Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) to clone the repository.
-4. **Azure Permissions**: Ensure your account or identity has the necessary permissions as detailed in the [Permissions](#permissions) section.
-
-## Installation
-
-1. **Clone the Repository**:
+1. Open [Azure Cloud Shell](https://shell.azure.com) (Bash).
+2. Download the script and install its dependencies:
 
     ```bash
-    git clone https://github.com/your-username/afs-snapshot-lease-breaker.git
-    cd afs-snapshot-lease-breaker
+    mkdir afs-lease-breaker && cd afs-lease-breaker
+    BASE=https://raw.githubusercontent.com/eliaquimbrandao/azure-storage-scripts/main/Storage/afs-snapshot-lease-breaker
+    curl -sSLO $BASE/afs-snapshot-break-lease.py -sSLO $BASE/requirements.txt
+    python3 -m pip install --user -r requirements.txt
     ```
 
-2. **Install Python Dependencies**:
+3. Preview what the script would do. Nothing is changed:
 
     ```bash
-    pip install -r requirements.txt
+    python3 afs-snapshot-break-lease.py --dry-run --auth 4 --account <storage_account> --share <file_share> --days 30
     ```
 
-3. **Verify Installation**: Ensure Python and pip are installed:
+4. Run it for real. You'll be asked to confirm before any lease is broken:
 
     ```bash
-    python --version
-    pip --version
+    python3 afs-snapshot-break-lease.py --auth 4 --account <storage_account> --share <file_share> --days 30
     ```
 
-## Usage
+> `--auth 4` reuses your Cloud Shell sign-in. If that fails, use `--auth 3` (device code) or `--auth 1` (account key).
 
-Run the script in interactive mode or provide arguments directly via the command line.
+## Quick start (your own machine)
 
-### Interactive Mode
-
-**Windows (recommended):**
+Requires Python 3.8 or later.
 
 ```bash
-py -3 afs-snapshot-break-lease.py
+git clone https://github.com/eliaquimbrandao/azure-storage-scripts.git
+cd azure-storage-scripts/Storage/afs-snapshot-lease-breaker
+python -m pip install -r requirements.txt       # Windows: py -3 -m pip install -r requirements.txt
+python afs-snapshot-break-lease.py              # Windows: py -3 afs-snapshot-break-lease.py
 ```
+
+If you run it with no arguments, the script asks for everything it needs: the sign-in method, storage account, file share and cutoff in days.
+
+## What it does
+
+1. Lists every snapshot of the specified file share. Other shares are ignored, even if their names start the same way.
+2. Shows a table with each snapshot's lease status and whether it is older than the cutoff (`--days`).
+3. Selects snapshots that are **leased** and **older than the cutoff**.
+   - If none are older but some newer snapshots are leased, it asks whether to break those instead.
+4. Asks for confirmation, breaks the leases, and prints a summary.
+5. Writes a detailed log. The log path is printed at the end of each run.
+
+The script **does not delete snapshots**. It only breaks leases. After that, you can delete snapshots in the portal, with the CLI, or by changing your backup policy.
+
+## Options
+
+| Option | Description |
+|---|---|
+| `--auth <1-4>` | `1` Account key · `2` Entra ID browser sign-in (desktop) · `3` Entra ID device code (Cloud Shell/servers) · `4` Azure CLI sign-in (`az login` / Cloud Shell) |
+| `--account <name>` | Storage account name |
+| `--share <name>` | File share name |
+| `--days <n>` | Retention cutoff in days. Snapshots older than this are targeted |
+| `--key <key>` | Storage account key, used only with `--auth 1`. You're prompted securely if you leave it out |
+| `--dry-run` | Only list the snapshots and their lease state. Makes no changes |
+| `--yes`, `-y` | Skip the confirmation prompt |
+| `--non-interactive` | Never prompt: fail if a required value is missing. Leases are broken only if `--yes` is also given |
+| `--endpoint-suffix <suffix>` | For sovereign clouds, for example `core.usgovcloudapi.net` or `core.chinacloudapi.cn`. Default: `core.windows.net` |
+
+### Automation example
 
 ```bash
-python afs-snapshot-break-lease.py
+python afs-snapshot-break-lease.py --non-interactive --yes --auth 4 --account <storage_account> --share <file_share> --days 30
 ```
 
-The script will prompt for any missing required information:
+## Authentication
 
-- Authentication method (1 for Account Key, 2 for Entra ID)
-- Storage Account name
-- Storage Account Key (if using Account Key)
-- File Share name
-- Retention cutoff (in days)
+| Method | When to use |
+|---|---|
+| `4` Azure CLI | Recommended in **Azure Cloud Shell**, or anywhere you have already run `az login` |
+| `3` Device code | Cloud Shell, SSH sessions or servers without a browser. Shows a code to enter at https://microsoft.com/devicelogin |
+| `2` Interactive browser | Desktop machines with a browser |
+| `1` Account key | When Entra ID isn't possible. Enter the key at the secure prompt. Avoid `--key`, because it ends up in your shell history and the process list |
 
-### Command-line Arguments
-
-You can provide all necessary parameters directly as command-line arguments for non-interactive execution:
-
-```bash
-python afs-snapshot-break-lease.py \
-  --account <storage_account_name> \
-  --auth <1|2> \
-  --key <account_key> \
-  --share <file_share_name> \
-  --days <retention_days>
-```
-
-**Windows (recommended):**
-
-```bash
-py -3 afs-snapshot-break-lease.py \
-    --account <storage_account_name> \
-    --auth <1|2> \
-    --key <account_key> \
-    --share <file_share_name> \
-    --days <retention_days>
-```
-
-*Note*:
-
-- `--auth`: Use `1` for Account Key, `2` for Entra ID.
-- `--key`: This argument is only required if `--auth` is set to `1`.
-
-### Non-interactive / Automation Mode
-
-Use `--non-interactive` to fail fast if required values are missing (ideal for automation):
-
-```bash
-python afs-snapshot-break-lease.py --non-interactive --auth 2 --account <storage_account_name> --share <file_share_name> --days 30
-```
-
-**Windows (recommended):**
-
-```bash
-py -3 afs-snapshot-break-lease.py --non-interactive --auth 2 --account <storage_account_name> --share <file_share_name> --days 30
-```
-
-### Dry-run Mode
-
-Use `--dry-run` to list snapshots without breaking leases:
-
-```bash
-python afs-snapshot-break-lease.py --dry-run --auth 2 --account <storage_account_name> --share <file_share_name> --days 30
-```
-
-**Windows (recommended):**
-
-```bash
-py -3 afs-snapshot-break-lease.py --dry-run --auth 2 --account <storage_account_name> --share <file_share_name> --days 30
-```
-
-## Quick Start (Download Only)
-
-If you prefer to download and run without cloning the full repo, download the script and requirements file, then:
-
-**Windows (recommended):**
-
-```bash
-py -3 -m pip install -r requirements.txt
-py -3 afs-snapshot-break-lease.py
-```
-
-**Other OS:**
-
-```bash
-pip install -r requirements.txt
-python afs-snapshot-break-lease.py
-```
-
-## Authentication Methods
-
-1. **Account Key**:
-    - Simple but less secure; ideal for testing or specific automated scenarios where Entra ID is not feasible.
-    - Select `1` in interactive mode or use `--auth 1`.
-    - Requires providing the Storage Account name and key.
-
-2. **Entra ID (Azure AD)**:
-    - Secure, identity-based authentication using `InteractiveBrowserCredential`.
-    - Select `2` in interactive mode or use `--auth 2`.
-    - Opens a browser for login if needed, providing a secure way to authenticate without handling sensitive keys directly.
+Entra ID (options 2–4) is recommended over account keys.
 
 ## Permissions
 
-The account or identity used to run this script requires permissions to list Azure File Share snapshots and break their leases. The **Storage File Data Privileged Contributor** role is generally considered the most granular role for data plane operations on Azure Files.
+- **Account key (`--auth 1`):** needs the storage account key. Getting the key requires `Microsoft.Storage/storageAccounts/listKeys/action`, which is included in *Storage Account Contributor*.
+- **Entra ID (`--auth 2/3/4`):** start with **Storage File Data Privileged Contributor** on the storage account.
+  In testing, some lease operations weren't allowed with this role alone. If you get `AuthorizationPermissionMismatch` or `403` errors, use **Storage Account Contributor** or the account key method instead.
 
-However, during testing, it has been observed that the **Storage File Data Privileged Contributor** role might not always provide sufficient permissions for all lease-breaking operations performed by the script. While listing snapshots typically works, there is no option in the Azure Portal to break leases manually — this must be done programmatically. In such cases, the **Storage Account Contributor** role has been found to work. Please be aware that **Storage Account Contributor** grants broader permissions, including management plane access to the storage account, so use it with caution and only if strictly necessary.
+Assign roles at the **storage account** level (least privilege). Role assignments can take a few minutes to apply.
 
-To follow the principle of least privilege, assign these roles only at the **specific storage account** or **resource group** level, and avoid broader scopes whenever possible.
-
-## Security Considerations
-
-### Recommendation: Use Entra ID
-
-For optimal security, it is **strongly recommended** to use the Entra ID authentication method (`--auth 2`) whenever possible. This approach has several advantages:
-
-- It avoids handling sensitive storage account keys directly.
-- Authentication is handled through a secure, interactive browser login flow managed by Azure.
-- It aligns with modern security best practices of using identity-based access over shared secrets.
-
-### Account Key Risks
-
-If you must use the Account Key method (`--auth 1`), be aware of the following security risks:
-
-- **Command-Line Exposure**: Providing the key via the `--key <account_key>` argument is **not recommended**. This may expose the key in your shell's history file and make it visible in your system's process list.
-- **Interactive Prompt**: The script has been updated to use a secure interactive prompt that hides the key as it is typed and prevents it from being saved in your shell's history. If you must use the Account Key method, always use the interactive prompt instead of the `--key` argument.
-
-To minimize risk, always prefer Entra ID authentication and ensure the identity has only the necessary permissions, as described in the [Permissions](#permissions) section.
-
-## Example Output
-
-Here’s what you can expect when running the script:
+## Example output
 
 ```plaintext
-🔐 Authentication: Entra ID (Interactive) | Account: mystorageaccount | Share: myshare | Cutoff days: 30
+🔐 Authentication: Entra ID (Azure CLI login) | Account: mystorageaccount | Share: myshare | Cutoff days: 30
 
 🔍 Checking snapshots for 'myshare' older than 30 days...
 
 Snapshot                            Status     State      Older?
-2023-10-01T12:00:00.000000Z         locked     leased     Yes
-2023-11-15T12:00:00.000000Z         unlocked   available  No
-2024-01-20T08:30:00.000000Z         locked     leased     No
+2024-05-01T12:00:00.0000000Z        locked     leased     Yes
+2024-05-15T12:00:00.0000000Z        unlocked   available  Yes
+2024-06-20T08:30:00.0000000Z        locked     leased     No
 
-⚠️ No snapshots older than cutoff, but 1 are locked.
-Break their leases anyway? (y/n): y
+⚠️ 1 leased snapshot(s) are older than 30 days.
+   Leases on share snapshots are typically held by Azure Backup to protect restore points.
+   Breaking a lease allows the snapshot to be deleted.
+Break their leases? (y/n): y
 
-Snapshot 2024-01-20T08:30:00.000000Z — SUCCESS
+Snapshot 2024-05-01T12:00:00.0000000Z — SUCCESS
 
 === FINAL SUMMARY ===
 Snapshot                            Result
-2023-10-01T12:00:00.000000Z         SUCCESS
-2024-01-20T08:30:00.000000Z         SUCCESS
+2024-05-01T12:00:00.0000000Z        SUCCESS
 
-✅ Total succeeded: 2
+✅ Total succeeded: 1
 ❌ Total failed: 0
 
-Detailed log: C:\Users\username\snapshot-lease-breaker\error-log.20240622_143000.log
+Detailed log: /home/user/snapshot-lease-breaker/error-log.20240622_143000.log
 ```
 
 ## Troubleshooting
 
-- **ResourceNotFoundError**: Verify the Storage Account name, File Share name, or that the specified snapshot exists.
-- **HttpResponseError**: Check your credentials, ensure the identity has the correct permissions (see [Permissions](#permissions)), or verify the Azure service status.
-- **ModuleNotFoundError**: Ensure `azure-storage-file-share` and `azure-identity` are installed as per the [Installation](#installation) steps.
-- **Timestamp Parsing Issues**: The script handles various timestamp formats, but if issues persist, please report them.
-**Detailed Errors:** For any failures, check the detailed log file specified at the end of the script’s output (e.g., `Detailed log: /Users/username/snapshot-lease-breaker/error-log.YYYYMMDD_HHMMSS.log` on macOS/Linux, or `C:\Users\username\snapshot-lease-breaker\error-log.YYYYMMDD_HHMMSS.log` on Windows).
+| Problem | Fix |
+|---|---|
+| `File share '<name>' was not found` | Check the storage account and share names. Both are lowercase |
+| `Authentication failed` | Try a different `--auth` method. In Cloud Shell, use `4` or `3` |
+| `HttpResponseError` / `403` | Check [Permissions](#permissions), the storage account firewall and private endpoints (your IP or network must be allowed) |
+| `ModuleNotFoundError` | Run `python -m pip install -r requirements.txt`. On a very new Python release, use the latest version the Azure SDK supports |
+| Lease break `FAILED` | See the log file for the exact error |
 
-## Future Improvements
+**Log location:** `~/snapshot-lease-breaker/` on macOS/Linux, `%APPDATA%\snapshot-lease-breaker\` on Windows.
 
-This section can be updated or expanded in the future as needed or upon request.
+## Disclaimer
 
-## Collaboration & Contribution
-
-We love community input! 🌟 Whether you’re a Python pro or just getting started with Azure, your contributions can make this tool even better. Here’s how you can help:
-
-- **Report Issues**: Found a bug? [Open an issue](https://github.com/eliaquimbrandao/azure-storage-scripts/issues).
-- **Suggest Features**: Have an idea? Share it with us!
-- **Submit Pull Requests**: Fork the repo and contribute code.
-
-Let’s build a robust tool for Azure snapshot management together!
-
-## Contact
-
-Questions or feedback? Reach out:
-
-- **GitHub**: [Your GitHub Profile](https://github.com/eliaquimbrandao)
-- **LinkedIn**: [Your LinkedIn Profile](https://www.linkedin.com/in/eliaquim/)
+This script is provided **"as-is"**, without warranties of any kind. Review it and test it in a non-production environment before you use it. You are responsible for validating its impact on your backups and data.
 
 ## License
 
-Made with ❤️ by [Eliaquim Brandao](https://github.com/eliaquimbrandao)
-
-This project is licensed under the [MIT License](https://choosealicense.com/licenses/mit/).
+[MIT](../../LICENSE) — © Eliaquim Brandao

@@ -36,8 +36,8 @@ from logging.handlers import RotatingFileHandler
 # =========================
 try:
     from azure.storage.fileshare import ShareServiceClient, ShareLeaseClient
-    from azure.identity import InteractiveBrowserCredential
-    from azure.core.exceptions import HttpResponseError
+    from azure.identity import InteractiveBrowserCredential, DeviceCodeCredential, AzureCliCredential
+    from azure.core.exceptions import HttpResponseError, ResourceNotFoundError, ClientAuthenticationError
 except ModuleNotFoundError as e:
     missing = str(e).split("No module named ")[-1].strip("'\"")
     print(
@@ -58,6 +58,14 @@ import argparse
 
 AUTH_KEY = "1"
 AUTH_ENTRA = "2"
+AUTH_DEVICE = "3"
+AUTH_CLI = "4"
+AUTH_LABELS = {
+    AUTH_KEY: "Account Key",
+    AUTH_ENTRA: "Entra ID (Interactive browser)",
+    AUTH_DEVICE: "Entra ID (Device code)",
+    AUTH_CLI: "Entra ID (Azure CLI login)",
+}
 LOG_DIR_NAME = "snapshot-lease-breaker"
 
 def setup_logging() -> str:
@@ -143,12 +151,14 @@ def prompt_missing(auth, account, share, days):
     if not auth:
         print("Choose authentication method:")
         print("1) Account Key")
-        print("2) Entra ID (Interactive)")
+        print("2) Entra ID - Interactive browser (desktop)")
+        print("3) Entra ID - Device code (Azure Cloud Shell / headless servers)")
+        print("4) Entra ID - Azure CLI login (uses your existing 'az login')")
         while True:
-            auth = input("Enter your choice (1 or 2): ").strip()
-            if auth in (AUTH_KEY, AUTH_ENTRA):
+            auth = input("Enter your choice (1-4): ").strip()
+            if auth in AUTH_LABELS:
                 break
-            print("Invalid input. Please enter '1' or '2'.")
+            print("Invalid input. Please enter 1, 2, 3 or 4.")
 
     if not account:
         while True:
@@ -178,7 +188,9 @@ def prompt_missing(auth, account, share, days):
     return auth, account, share, days
 
 
-def build_service_client(auth, account, key, non_interactive):
+def build_service_client(auth, account, key, non_interactive, endpoint_suffix):
+    account_url = f"https://{account}.file.{endpoint_suffix}"
+
     if auth == AUTH_KEY:
         if not key:
             if non_interactive:
@@ -196,20 +208,21 @@ def build_service_client(auth, account, key, non_interactive):
                 logging.error(f"Could not read key securely: {e}")
                 sys.exit(1)
 
-        return ShareServiceClient(f"https://{account}.file.core.windows.net", credential=key)
+        return ShareServiceClient(account_url, credential=key)
 
-    cred = InteractiveBrowserCredential()
+    if auth == AUTH_DEVICE:
+        cred = DeviceCodeCredential()
+    elif auth == AUTH_CLI:
+        cred = AzureCliCredential()
+    else:
+        cred = InteractiveBrowserCredential()
 
     # token_intent was added to support "backup" scenarios for some data-plane operations.
     # To remain compatible across Azure SDK versions, fall back if the installed SDK doesn't support it.
     try:
-        return ShareServiceClient(
-            f"https://{account}.file.core.windows.net",
-            credential=cred,
-            token_intent="backup",
-        )
+        return ShareServiceClient(account_url, credential=cred, token_intent="backup")
     except TypeError:
-        return ShareServiceClient(f"https://{account}.file.core.windows.net", credential=cred)
+        return ShareServiceClient(account_url, credential=cred)
 
 
 def list_snapshots(svc, share, cutoff, log_path):
@@ -217,6 +230,9 @@ def list_snapshots(svc, share, cutoff, log_path):
     try:
         entries = svc.list_shares(name_starts_with=share, include_snapshots=True)
         for e in entries:
+            # name_starts_with is a prefix match, so skip other shares (e.g. 'data' vs 'data-archive').
+            if e.get("name") != share:
+                continue
             snap = e.get("snapshot")
             if not snap:
                 continue
@@ -229,8 +245,18 @@ def list_snapshots(svc, share, cutoff, log_path):
                 "ts": tsnap,
                 "status": lease.get("status"),
                 "state": lease.get("state"),
-                "older": tsnap < cutoff
+                "older": tsnap < cutoff,
             })
+    except ResourceNotFoundError as e:
+        logging.error(f"Share not found: {e.message or str(e)}", exc_info=True)
+        print(f"\n❌ File share '{share}' was not found in this storage account.")
+        print(f"Detailed log: {log_path}")
+        sys.exit(1)
+    except ClientAuthenticationError as e:
+        logging.error(f"Authentication failed: {e}", exc_info=True)
+        print("\n❌ Authentication failed. Try another --auth method (e.g. 3 = device code in Cloud Shell).")
+        print(f"Detailed log: {log_path}")
+        sys.exit(1)
     except HttpResponseError as e:
         logging.error(f"Failed to list or inspect snapshots: {e.message or str(e)}", exc_info=True)
         print("\n❌ Failed to list or inspect snapshots. Check credentials, permissions, and network connectivity.")
@@ -241,9 +267,36 @@ def list_snapshots(svc, share, cutoff, log_path):
 
 
 def print_snapshot_table(infos):
+    if not infos:
+        print("No snapshots found for this share.")
+        return
     print(f"{'Snapshot':<35} {'Status':<10} {'State':<10} {'Older?':<6}")
     for i in infos:
-        print(f"{i['snapshot']:<35} {i['status']:<10} {i['state']:<10} {'Yes' if i['older'] else 'No':<6}")
+        status = str(i["status"] or "-")
+        state = str(i["state"] or "-")
+        print(f"{i['snapshot']:<35} {status:<10} {state:<10} {'Yes' if i['older'] else 'No':<6}")
+
+
+def is_leased(info):
+    return str(info["status"] or "").lower() == "locked" and str(info["state"] or "").lower() == "leased"
+
+
+def confirm(question, assume_yes, non_interactive):
+    if assume_yes:
+        print(f"{question} yes (--yes)")
+        return True
+    if non_interactive:
+        print(f"{question} no (use --yes to confirm in non-interactive mode)")
+        return False
+    while True:
+        yn = input(f"{question} (y/n): ").strip().lower()
+        if yn in ("y", "yes"):
+            print()
+            return True
+        if yn in ("n", "no"):
+            print()
+            return False
+        print("Invalid. Enter 'y', 'yes', 'n' or 'no'.")
 
 
 def break_leases(svc, share, to_break):
@@ -271,14 +324,23 @@ def break_leases(svc, share, to_break):
 
 def main():
     # === Argument Parser ===
-    parser = argparse.ArgumentParser(description="Azure File Share Snapshot Lease Breaker")
-    parser.add_argument("--auth", choices=['1', '2'], help="1 for Account Key, 2 for Entra ID")
+    parser = argparse.ArgumentParser(
+        description="Azure File Share Snapshot Lease Breaker - lists snapshots of a file share and breaks their leases.",
+        epilog="Tip: always start with --dry-run to review what would be changed.",
+    )
+    parser.add_argument(
+        "--auth", choices=list(AUTH_LABELS),
+        help="1 = Account Key, 2 = Entra ID browser, 3 = Entra ID device code (Cloud Shell/headless), 4 = Azure CLI login",
+    )
     parser.add_argument("--account", help="Storage Account name")
     parser.add_argument("--key", help="Storage Account Key (only for --auth 1)")
     parser.add_argument("--share", help="File Share name")
     parser.add_argument("--days", type=int, help="Retention cutoff in days")
     parser.add_argument("--non-interactive", action="store_true", help="Fail if required args are missing")
     parser.add_argument("--dry-run", action="store_true", help="List snapshots but do not break leases")
+    parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompts (required to break leases with --non-interactive)")
+    parser.add_argument("--endpoint-suffix", default="core.windows.net",
+                        help="Storage endpoint suffix for sovereign clouds (e.g. core.usgovcloudapi.net, core.chinacloudapi.cn)")
     args = parser.parse_args()
 
     log_path = setup_logging()
@@ -305,12 +367,12 @@ def main():
         auth, account, share, days = prompt_missing(auth, account, share, days)
 
     print(
-        f"\n🔐 Authentication: {'Account Key' if auth==AUTH_KEY else 'Entra ID (Interactive)'}"
+        f"\n🔐 Authentication: {AUTH_LABELS[auth]}"
         f" | Account: {account} | Share: {share} | Cutoff days: {days}\n"
     )
-    logging.debug(f"Auth={'Key' if auth==AUTH_KEY else 'Interactive'}; Account={account}; Share={share}; CutoffDays={days}")
+    logging.debug(f"Auth={AUTH_LABELS[auth]}; Account={account}; Share={share}; CutoffDays={days}")
 
-    svc = build_service_client(auth, account, args.key, args.non_interactive)
+    svc = build_service_client(auth, account, args.key, args.non_interactive, args.endpoint_suffix)
 
     # === Process Snapshots ===
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
@@ -324,27 +386,26 @@ def main():
         print(f"\nDetailed log: {log_path}")
         return
 
-    older = [i for i in infos if i["older"]]
-    locked = [i for i in infos if not i["older"] and i["status"] == "locked" and i["state"] == "leased"]
+    older_leased = [i for i in infos if i["older"] and is_leased(i)]
+    newer_leased = [i for i in infos if not i["older"] and is_leased(i)]
 
-    if not older:
-        if locked:
-            print(f"\n⚠️ No snapshots older than cutoff, but {len(locked)} are locked.")
-            while True:
-                yn = input("Break their leases anyway? (y/n): ").strip().lower()
-                if yn in ("y", "yes", "n", "no"):
-                    print()
-                    break
-                print("Invalid. Enter 'y', 'yes', 'n' or 'no'.")
-            to_break = locked if yn.startswith("y") else []
-            if not to_break:
-                print("Nothing to do. Exiting.")
-                return
-        else:
-            print("\n✅ No snapshots to process. Exiting.")
-            return
+    if older_leased:
+        print(f"\n⚠️ {len(older_leased)} leased snapshot(s) are older than {days} days.")
+        print("   Leases on share snapshots are typically held by Azure Backup to protect restore points.")
+        print("   Breaking a lease allows the snapshot to be deleted.")
+        to_break = older_leased if confirm("Break their leases?", args.yes, args.non_interactive) else []
+    elif newer_leased:
+        print(f"\n⚠️ No leased snapshots older than cutoff, but {len(newer_leased)} newer snapshot(s) are leased.")
+        to_break = newer_leased if confirm("Break their leases anyway?", args.yes, args.non_interactive) else []
     else:
-        to_break = older
+        print("\n✅ No leased snapshots to process. Exiting.")
+        print(f"\nDetailed log: {log_path}")
+        return
+
+    if not to_break:
+        print("Nothing to do. Exiting.")
+        print(f"\nDetailed log: {log_path}")
+        return
 
     succ, fail = break_leases(svc, share, to_break)
 
