@@ -310,6 +310,63 @@ class FileShareRestClient:
 # =========================
 # Helpers
 # =========================
+def read_secret(prompt):
+    """Read a secret, echoing '*' per character so the user can see a paste landed."""
+    if not sys.stdin.isatty():
+        return getpass.getpass(prompt)
+
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    chars = []
+
+    if os.name == "nt":
+        import msvcrt
+        while True:
+            ch = msvcrt.getwch()
+            if ch in ("\r", "\n"):
+                break
+            if ch == "\x03":
+                raise KeyboardInterrupt
+            if ch in ("\x00", "\xe0"):  # arrow/function key prefix: skip the key code
+                msvcrt.getwch()
+                continue
+            if ch == "\x08":
+                if chars:
+                    chars.pop()
+                    sys.stdout.write("\b \b")
+            elif ch.isprintable():
+                chars.append(ch)
+                sys.stdout.write("*")
+            sys.stdout.flush()
+    else:
+        import termios
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        new = termios.tcgetattr(fd)
+        new[3] &= ~(termios.ECHO | termios.ICANON)  # no echo, char-by-char; Ctrl+C still works
+        new[6][termios.VMIN], new[6][termios.VTIME] = 1, 0
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, new)
+            while True:
+                ch = os.read(fd, 1).decode(errors="ignore")
+                if ch in ("\r", "\n", ""):
+                    break
+                if ch in ("\x7f", "\x08"):
+                    if chars:
+                        chars.pop()
+                        sys.stdout.write("\b \b")
+                elif ch.isprintable():
+                    chars.append(ch)
+                    sys.stdout.write("*")
+                sys.stdout.flush()
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+    return "".join(chars)
+
+
 def parse_snapshot_timestamp(s: str) -> datetime:
     """Convert snapshot timestamp string to UTC datetime."""
     if "." in s:
@@ -380,11 +437,12 @@ def build_client(args, auth, account):
             if args.non_interactive:
                 print("ERROR: --key is required when using --auth 1 in non-interactive mode.")
                 sys.exit(1)
-            key = getpass.getpass("Enter your Storage Account key: ").strip()
+            key = read_secret("Enter your Storage Account key: ").strip()
             if not key:
                 print("\nERROR: No key was entered. Exiting.\n")
                 sys.exit(1)
-            print("Key received, proceeding...\n")
+            note = "" if len(key) == 88 else " (Azure account keys are usually 88 characters, please double-check)"
+            print(f"Key received: {len(key)} characters{note}.\n")
         try:
             return FileShareRestClient(account, args.endpoint_suffix, key=key)
         except (ValueError, base64.binascii.Error):
