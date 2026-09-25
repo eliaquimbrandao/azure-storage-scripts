@@ -174,6 +174,7 @@ Detailed log: /home/user/snapshot-lease-breaker/error-log.20240622_143000.log
 | `File share '<name>' was not found` | Check the storage account and share names. Both are lowercase |
 | `Authentication failed` | Try a different `--auth` method. In Cloud Shell, use `4` or `3` |
 | `AuthorizationPermissionMismatch` / `403` | The identity is missing a permission. See [Permissions](#permissions). A firewall or private endpoint can also block you: your IP or network must be allowed |
+| pip stuck on `Preparing metadata` (Windows) | You're probably on **Windows on ARM** or 32-bit Python. `cryptography`, a dependency of `azure-identity`, only has ready-made Windows builds for x64, so pip tries to compile it. Install the **64-bit (x64)** Python from python.org (it runs on ARM through emulation), then recreate the venv with it: `py -V:3.13 -m venv .venv`. Use `pip install --only-binary=:all: -r requirements.txt` to fail fast instead of compiling |
 | `externally-managed-environment` from pip | Use a virtual environment (`python3 -m venv .venv`), as shown in the quick start |
 | `ModuleNotFoundError` | Run `python -m pip install -r requirements.txt`. On a very new Python release, use the latest version the Azure SDK supports |
 | Lease break `FAILED` | See the log file for the exact error |
