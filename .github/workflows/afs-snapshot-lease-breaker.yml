@@ -1,0 +1,65 @@
+name: afs-snapshot-lease-breaker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Storage/afs-snapshot-lease-breaker/**'
+      - '.github/workflows/afs-snapshot-lease-breaker.yml'
+  pull_request:
+    paths:
+      - 'Storage/afs-snapshot-lease-breaker/**'
+      - '.github/workflows/afs-snapshot-lease-breaker.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: Storage/afs-snapshot-lease-breaker
+
+jobs:
+  python:
+    name: Python ${{ matrix.python }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ['3.9', '3.13']
+        include:
+          - os: ubuntu-22.04
+            python: '3.8'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run tests (standard library only, no pip install)
+        run: python -m unittest discover -s tests -v
+      - name: Smoke test --help / --version
+        run: |
+          python afs-snapshot-break-lease.py --version
+          python afs-snapshot-break-lease.py --help
+
+  powershell:
+    name: PowerShell on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install Az.Storage
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Az.Storage -Scope CurrentUser -Force
+      - name: Run PowerShell tests
+        shell: pwsh
+        run: ./tests/test_powershell.ps1

@@ -3,13 +3,18 @@
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
 ![Azure](https://img.shields.io/badge/Azure-Files-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellowgreen)
+[![Tests](https://github.com/eliaquimbrandao/azure-storage-scripts/actions/workflows/afs-snapshot-lease-breaker.yml/badge.svg)](https://github.com/eliaquimbrandao/azure-storage-scripts/actions/workflows/afs-snapshot-lease-breaker.yml)
 
-Lists the snapshots of an Azure File Share, shows which ones are **leased**, and breaks those leases so the snapshots can be deleted. The Azure portal can't break snapshot leases, so you have to do it through the API. This script does that for you.
+Lists the snapshots of an Azure File Share (or of every share in a storage account), shows which ones are **leased**, and breaks those leases so the snapshots can be deleted. It can optionally delete the snapshots too. The Azure portal can't break snapshot leases, so you have to do it through the API. This script does that for you.
 
 > [!WARNING]
 > Leases on file share snapshots are usually held by **Azure Backup** to protect recovery points.
 > Breaking a lease lets that snapshot be deleted, and the matching restore point may stop working.
-> Check which snapshots you need first, and **always start with `--dry-run`**.
+> Check which snapshots you need first, and **always start with `--dry-run`** (Python) or **`-WhatIf`** (PowerShell).
+>
+> If the share is protected by Azure Backup, the supported way to remove backup snapshots is to lower the retention in the
+> backup policy, or use **Stop protection and delete data** in the Recovery Services vault. Use this tool when that isn't
+> possible, for example for orphaned snapshots left behind after the vault or backup item was removed.
 > This script is provided as-is, without warranty. See [Disclaimer](#disclaimer).
 
 Two versions are included. Both do the same job, so pick whichever suits you:
@@ -42,11 +47,17 @@ Two versions are included. Both do the same job, so pick whichever suits you:
 
 | Parameter | Description |
 |---|---|
-| `-StorageAccount`, `-Share` | Storage account and file share names (required) |
-| `-OlderThanDays <n>` | Only snapshots older than *n* days. Default `0` targets all leased snapshots |
-| `-UseEntraId` | Sign in with Entra ID instead of being prompted for the account key. Needs the roles in [Permissions](#permissions) |
+| `-StorageAccount` | Storage account name (required) |
+| `-Share <name>` / `-AllShares` | One file share, or every share in the storage account |
+| `-OlderThanDays <n>` | Only snapshots older than *n* days. Default `0` selects all snapshots |
+| `-Snapshot <timestamp>` | Only these snapshots, e.g. `2024-05-01T12:00:00.0000000Z`. Accepts several, separated by commas |
+| `-Delete` | Also **delete** the selected snapshots after breaking their leases. Can't be undone. Requires `-OlderThanDays` or `-Snapshot` |
+| `-ReportPath <file>` | Save a `.csv` or `.json` report of every snapshot and what happened to it |
+| `-UseEntraId` [`-TenantId <id>`] | Sign in with Entra ID instead of being prompted for the account key. Needs the roles in [Permissions](#permissions) |
 | `-Environment` | Sovereign cloud, e.g. `AzureUSGovernment` or `AzureChinaCloud` |
 | `-WhatIf` / `-Confirm:$false` | Dry run / skip the prompts |
+
+The account key can also be supplied in the `AZURE_STORAGE_KEY` environment variable.
 
 > On Windows, if you get *"running scripts is disabled"*, run `Set-ExecutionPolicy -Scope Process Bypass` first, then run the script again.
 > Full help: `Get-Help ./Break-AfsSnapshotLease.ps1 -Full`.
@@ -84,14 +95,29 @@ If you run it with no arguments, the script asks for everything it needs: the si
 
 ## What it does
 
-1. Lists every snapshot of the specified file share. Other shares are ignored, even if their names start the same way.
-2. Shows a table with each snapshot's lease status and whether it is older than the cutoff (`--days`).
-3. Selects snapshots that are **leased** and **older than the cutoff**.
-   - If none are older but some newer snapshots are leased, it asks whether to break those instead.
-4. Asks for confirmation, breaks the leases, and prints a summary.
-5. Writes a detailed log. The log path is printed at the end of each run.
+1. Lists every snapshot of the specified file share, or of all shares with `--all-shares`. Other shares are ignored, even if their names start the same way.
+2. Shows a table with each snapshot's lease status, whether it is selected, and whether it looks like an Azure Backup snapshot (see [Backup column](#backup-column)).
+3. Selects snapshots older than the cutoff (`--days`), or the exact snapshots given with `--snapshot`.
+   - With `--days`, if none of the older snapshots are leased but some newer ones are, it asks whether to break those instead.
+4. Asks for confirmation, then breaks the leases of the selected leased snapshots.
+5. With `--delete`, it asks you to type `delete`, then deletes the selected snapshots.
+6. Prints a summary, optionally writes a CSV/JSON report (`--report`), and writes a detailed log. The log path is printed at the end of each run.
 
-The script **does not delete snapshots**. It only breaks leases. After that, you can delete snapshots in the portal, with the CLI, or by changing your backup policy.
+By default the script **only breaks leases** and does not delete anything. After that, you can delete the snapshots in the portal, with the CLI, with `--delete`, or by changing your backup policy.
+
+Requests that fail because Azure is busy (throttling, `500`/`503` errors, timeouts or network errors) are retried automatically, up to 5 attempts with backoff.
+
+### Backup column
+
+Azure doesn't report *who* holds a lease, so this column is a best-effort hint:
+
+| Value | Meaning |
+|---|---|
+| `Yes` | The snapshot has Azure Backup metadata |
+| `Likely` | The snapshot has an infinite lease and its share has Azure Backup metadata |
+| `-` | No Azure Backup markers found. This does **not** guarantee the snapshot isn't used by a backup |
+
+When a share has Azure Backup metadata, the script also prints a reminder about managing it from the Recovery Services vault.
 
 ## Options
 
@@ -99,20 +125,43 @@ The script **does not delete snapshots**. It only breaks leases. After that, you
 |---|---|
 | `--auth <1-4>` | `1` Account key · `2` Entra ID browser sign-in (desktop) · `3` Entra ID device code (Cloud Shell/servers) · `4` Azure CLI sign-in (`az login` / Cloud Shell) |
 | `--account <name>` | Storage account name |
-| `--share <name>` | File share name |
-| `--days <n>` | Retention cutoff in days. Snapshots older than this are targeted |
-| `--key <key>` | Storage account key, used only with `--auth 1`. You're prompted securely if you leave it out |
-| `--dry-run` | Only list the snapshots and their lease state. Makes no changes |
-| `--yes`, `-y` | Skip the confirmation prompt |
-| `--non-interactive` | Never prompt: fail if a required value is missing. Leases are broken only if `--yes` is also given |
+| `--share <name>` | File share name. At the interactive prompt, enter `*` for all shares |
+| `--all-shares` | Process every file share in the storage account |
+| `--days <n>` | Retention cutoff in days. Snapshots older than this are selected |
+| `--snapshot <timestamp>` | Select a specific snapshot instead of using `--days`, e.g. `2024-05-01T12:00:00.0000000Z`. Repeat it for several |
+| `--key <key>` | Storage account key, used only with `--auth 1`. You're prompted securely if you leave it out. You can also set `AZURE_STORAGE_KEY` |
+| `--dry-run` | Only list the snapshots and what would happen. Makes no changes |
+| `--delete` | Also **delete** the selected snapshots after breaking their leases. Can't be undone |
+| `--report <file>` | Save a report of every snapshot and the result to a `.csv` or `.json` file |
+| `--yes`, `-y` | Skip the confirmation prompts |
+| `--non-interactive` | Never prompt: fail if a required value is missing. Changes are made only if `--yes` is also given |
 | `--tenant <id or domain>` | Entra ID tenant of the storage account. Needed if your account belongs to several tenants, or you're a guest user |
 | `--endpoint-suffix <suffix>` | For sovereign clouds, for example `core.usgovcloudapi.net` or `core.chinacloudapi.cn`. Default: `core.windows.net` |
+| `--version` | Show the script version |
 
-### Automation example
+### Examples
 
 ```bash
+# Review every share in the account and save a report, without changing anything
+python afs-snapshot-break-lease.py --dry-run --auth 4 --account <storage_account> --all-shares --days 30 --report snapshots.csv
+
+# Break the lease on one snapshot and delete it
+python afs-snapshot-break-lease.py --auth 4 --account <storage_account> --share <file_share> \
+  --snapshot 2024-05-01T12:00:00.0000000Z --delete
+
+# Automation: no prompts
 python afs-snapshot-break-lease.py --non-interactive --yes --auth 4 --account <storage_account> --share <file_share> --days 30
 ```
+
+### Exit codes and report
+
+Both scripts return `0` on success (including dry runs and when there's nothing to do), `1` on errors such as invalid
+arguments, failed sign-in or a missing share, and `2` if some lease breaks or deletions failed.
+
+The report has one row per snapshot with: `share`, `snapshot`, `lease_status`, `lease_state`, `lease_duration`,
+`selected`, `backup`, `action` (`break-lease`, `delete` or `break-lease+delete`), `result` (`SUCCESS`, `FAILED`,
+`SKIPPED` or `DRY-RUN`) and `error`. The JSON report also records the run settings. The PowerShell report uses the
+same fields with PascalCase names.
 
 ## Authentication
 
@@ -127,7 +176,7 @@ Entra ID (options 2–4) is recommended over account keys.
 
 ## Permissions
 
-The script uses two Azure Files REST operations: *List Shares* (including snapshots and their lease state) and *Lease Share* (break).
+The script uses these Azure Files REST operations: *List Shares* (including snapshots, metadata and lease state), *Lease Share* (break) and, with `--delete`, *Delete Share* on the snapshot.
 
 **Account key (`--auth 1`)** — the key grants full access to the storage account. To read the key in the portal or CLI, you need `Microsoft.Storage/storageAccounts/listKeys/action`, which is included in **Storage Account Contributor**.
 
@@ -137,11 +186,12 @@ The script uses two Azure Files REST operations: *List Shares* (including snapsh
 |---|---|
 | `Microsoft.Storage/storageAccounts/fileServices/shares/read` | List Shares |
 | `Microsoft.Storage/storageAccounts/fileServices/shares/lease/action` | Break the lease |
+| `Microsoft.Storage/storageAccounts/fileServices/shares/delete` | Delete snapshots (only with `--delete` / `-Delete`) |
 
 These are **management (control-plane) actions**, not data actions. Data roles such as *Storage File Data Privileged Contributor* don't include them, so that role alone isn't enough. Assign one of:
 
-- **Storage Account Contributor**. This built-in role includes both actions. It is broad, so scope it to the single storage account.
-- A **custom role** with only the two actions above. This is the least-privilege option.
+- **Storage Account Contributor**. This built-in role includes all of these actions. It is broad, so scope it to the single storage account.
+- A **custom role** with only the actions above. This is the least-privilege option.
 
 Also assign **Storage File Data Privileged Contributor** on the same storage account. Microsoft's guidance for Azure Files OAuth over REST asks for a data role alongside the management permissions, and having it avoids `403` errors.
 
@@ -153,28 +203,27 @@ References: [Permissions for calling Azure Files operations](https://learn.micro
 ## Example output
 
 ```plaintext
-🔐 Authentication: Entra ID (Azure CLI login) | Account: mystorageaccount | Share: myshare | Cutoff days: 30
+🔐 Authentication: Entra ID (Azure CLI login) | Account: mystorageaccount | Share: myshare | cutoff days: 30
 
-🔍 Checking snapshots for 'myshare' older than 30 days...
+🔍 Listing snapshots of 'myshare'...
 
-Snapshot                            Status     State      Older?
-2024-05-01T12:00:00.0000000Z        locked     leased     Yes
-2024-05-15T12:00:00.0000000Z        unlocked   available  Yes
-2024-06-20T08:30:00.0000000Z        locked     leased     No
+Snapshot                        Status    State      Older?  Backup?
+2024-05-01T12:00:00.0000000Z    locked    leased     Yes     -
+2024-05-15T12:00:00.0000000Z    unlocked  available  Yes     -
+2024-06-20T08:30:00.0000000Z    locked    leased     No      -
 
-⚠️ 1 leased snapshot(s) are older than 30 days.
+⚠️ 1 leased snapshot(s) selected.
    Leases on share snapshots are typically held by Azure Backup to protect restore points.
    Breaking a lease allows the snapshot to be deleted.
 Break their leases? (y/n): y
 
-Snapshot 2024-05-01T12:00:00.0000000Z — SUCCESS
+Break lease   myshare@2024-05-01T12:00:00.0000000Z — SUCCESS
 
 === FINAL SUMMARY ===
-Snapshot                            Result
-2024-05-01T12:00:00.0000000Z        SUCCESS
+myshare@2024-05-01T12:00:00.0000000Z                         break-lease          SUCCESS
 
-✅ Total succeeded: 1
-❌ Total failed: 0
+✅ Succeeded: 1
+❌ Failed: 0
 
 Detailed log: /home/user/snapshot-lease-breaker/error-log.20240622_143000.log
 ```
@@ -191,8 +240,31 @@ Detailed log: /home/user/snapshot-lease-breaker/error-log.20240622_143000.log
 | `Azure CLI ('az') not found` | Install the Azure CLI, or use `--auth 2` or `3` |
 | `InvalidAuthenticationInfo` with Entra ID | The storage account is in another tenant. Add `--tenant <tenant-id>` |
 | Lease break `FAILED` | See the log file for the exact error |
+| Delete `FAILED` with `LeaseIdMissing` | The snapshot is still leased. The lease break probably failed; see the log |
+| Retrying messages (`⏳ Azure is busy...`) | Azure is throttling or temporarily unavailable. The script retries automatically |
 
 **Log location:** `~/snapshot-lease-breaker/` on macOS/Linux, `%APPDATA%\snapshot-lease-breaker\` on Windows.
+
+## Testing
+
+The tests use a local mock of the Azure Files REST API, so they don't need an Azure subscription. The Shared Key
+signatures are checked against values produced by the official Azure SDK.
+
+```bash
+python -m unittest discover -s tests -v   # Python (standard library only)
+pwsh ./tests/test_powershell.ps1          # PowerShell (needs Az.Storage and Python)
+```
+
+They also run in GitHub Actions on Windows, macOS and Linux for every change.
+
+## Changelog
+
+- **2.0.0**
+  - Added `--all-shares`, `--snapshot`, `--delete`, `--report` (CSV/JSON) and the Backup column to both scripts.
+  - Automatic retries for throttling and transient errors.
+  - `AZURE_STORAGE_KEY` support, `--version`, and exit code `2` for partial failures.
+  - Automated tests and CI.
+- **1.x**: Python script with no dependencies (works on Windows ARM), masked key input, and the PowerShell version.
 
 ## Disclaimer
 

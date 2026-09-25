@@ -1,7 +1,8 @@
 """Azure File Share Snapshot Lease Breaker.
 
-Lists the snapshots of an Azure file share and breaks their leases so they can be deleted.
-Uses only the Python standard library (no pip install needed) and calls the Azure Files REST API directly.
+Lists the snapshots of Azure file shares, breaks their leases so they can be deleted, and
+optionally deletes them. Uses only the Python standard library (no pip install needed) and
+calls the Azure Files REST API directly.
 """
 import sys
 
@@ -19,15 +20,18 @@ if sys.version_info[:2] < MIN_VERSION:
 
 import argparse
 import base64
+import csv
 import getpass
 import hashlib
 import hmac
 import json
 import logging
 import os
+import random
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -40,6 +44,8 @@ from datetime import datetime, timedelta, timezone
 from email.utils import formatdate
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from logging.handlers import RotatingFileHandler
+
+__version__ = "2.0.0"
 
 AUTH_KEY = "1"
 AUTH_BROWSER = "2"
@@ -63,9 +69,15 @@ LOGIN_HOSTS = {
     "core.chinacloudapi.cn": "login.chinacloudapi.cn",
 }
 HTTP_TIMEOUT = 60
+MAX_ATTEMPTS = 5
+RETRY_STATUSES = {408, 429, 500, 502, 503, 504}
 LOG_DIR_NAME = "snapshot-lease-breaker"
 ACCT_RE = re.compile(r"^[a-z0-9]{3,24}$")
 SHARE_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$")
+
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_PARTIAL = 2
 
 
 class AzureError(Exception):
@@ -86,6 +98,8 @@ def setup_logging() -> str:
     file_h = RotatingFileHandler(log_path, maxBytes=2_000_000, backupCount=5, encoding="utf-8")
     file_h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     root = logging.getLogger()
+    for h in root.handlers:
+        h.close()
     root.handlers = [file_h]
     root.setLevel(logging.DEBUG)
     return log_path
@@ -221,11 +235,12 @@ def get_token_azure_cli(tenant):
 # Azure Files REST client
 # =========================
 class FileShareRestClient:
-    def __init__(self, account, endpoint_suffix, key=None, token=None):
+    def __init__(self, account, endpoint_suffix, key=None, token=None, account_url=None, sleep=None):
         self.account = account
-        self.base_url = f"https://{account}.file.{endpoint_suffix}"
+        self.base_url = (account_url or f"https://{account}.file.{endpoint_suffix}").rstrip("/")
         self.key = base64.b64decode(key, validate=True) if key else None
         self.token = token
+        self._sleep = sleep or (lambda seconds: time.sleep(seconds))
 
     def _sign(self, method, path, query, headers):
         """Shared Key signature for the File service."""
@@ -245,10 +260,10 @@ class FileShareRestClient:
         sig = base64.b64encode(hmac.new(self.key, string_to_sign.encode("utf-8"), hashlib.sha256).digest()).decode()
         return f"SharedKey {self.account}:{sig}"
 
-    def request(self, method, path, query, extra_headers=None):
+    def _send_once(self, method, path, query, extra_headers):
         headers = {"x-ms-version": API_VERSION, "x-ms-date": formatdate(usegmt=True)}
         headers.update(extra_headers or {})
-        if method in ("PUT", "POST"):
+        if method in ("PUT", "POST", "DELETE"):
             headers["Content-Length"] = "0"
             # Set explicitly so urllib doesn't add its own (unsigned) form Content-Type.
             headers["Content-Type"] = "application/octet-stream"
@@ -259,42 +274,71 @@ class FileShareRestClient:
             headers["x-ms-file-request-intent"] = "backup"
 
         url = self.base_url + urllib.parse.quote(path) + "?" + urllib.parse.urlencode(query)
-        req = urllib.request.Request(url, method=method, headers=headers, data=b"" if method in ("PUT", "POST") else None)
+        data = b"" if method in ("PUT", "POST", "DELETE") else None
+        req = urllib.request.Request(url, method=method, headers=headers, data=data)
         logging.debug(f"{method} {url}")
-        try:
-            with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
-                return r.status, r.read()
-        except urllib.error.HTTPError as e:
-            body = e.read()
-            code, message = e.headers.get("x-ms-error-code", ""), ""
-            try:
-                root = ET.fromstring(body)
-                code = root.findtext("Code") or code
-                message = (root.findtext("Message") or "").split("\n")[0]
-            except ET.ParseError:
-                message = body.decode(errors="replace")[:300]
-            logging.error(f"{method} {url} -> {e.code} {code}: {message}")
-            raise AzureError(e.code, code, message) from None
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
+            return r.status, r.read()
 
-    def list_share_snapshots(self, share):
-        """Yield (snapshot, lease_status, lease_state) for snapshots of exactly this share."""
+    def request(self, method, path, query, extra_headers=None):
+        """Send a request, retrying transient failures (throttling, server busy, network) with backoff."""
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            retry_after = None
+            try:
+                return self._send_once(method, path, query, extra_headers)
+            except urllib.error.HTTPError as e:
+                body = e.read()
+                e.close()
+                code, message = e.headers.get("x-ms-error-code", "") or "", ""
+                try:
+                    root = ET.fromstring(body)
+                    code = root.findtext("Code") or code
+                    message = (root.findtext("Message") or "").split("\n")[0]
+                except ET.ParseError:
+                    message = body.decode(errors="replace")[:300]
+                logging.error(f"{method} {path} {query} -> {e.code} {code}: {message} (attempt {attempt})")
+                if e.code not in RETRY_STATUSES or attempt == MAX_ATTEMPTS:
+                    raise AzureError(e.code, code, message) from None
+                retry_after = e.headers.get("Retry-After")
+            except (urllib.error.URLError, socket.timeout, ConnectionError) as e:
+                logging.error(f"{method} {path} {query} -> network error: {e} (attempt {attempt})")
+                if attempt == MAX_ATTEMPTS:
+                    raise
+            delay = min(30.0, 2 ** attempt) + random.uniform(0, 1)
+            if retry_after and retry_after.isdigit():
+                delay = min(60.0, float(retry_after))
+            print(f"   ⏳ Azure is busy or the network failed; retrying in {delay:.0f}s ({attempt}/{MAX_ATTEMPTS - 1})...")
+            self._sleep(delay)
+
+    def list_snapshots(self, share=None):
+        """Yield snapshot dicts for one share (exact name match) or for all shares when share is None.
+
+        Also yields base-share entries (snapshot=None) so callers can read base-share metadata.
+        """
         marker = None
         while True:
-            q = {"comp": "list", "include": "snapshots", "prefix": share}
+            q = {"comp": "list", "include": "snapshots,metadata"}
+            if share:
+                q["prefix"] = share
             if marker:
                 q["marker"] = marker
             _, body = self.request("GET", "/", q)
             root = ET.fromstring(body)
             for s in root.iter("Share"):
+                name = s.findtext("Name")
                 # prefix is a prefix match, so skip other shares (e.g. 'data' vs 'data-archive').
-                if s.findtext("Name") != share or not s.findtext("Snapshot"):
+                if share and name != share:
                     continue
                 props = s.find("Properties")
-                yield (
-                    s.findtext("Snapshot"),
-                    (props.findtext("LeaseStatus") if props is not None else None),
-                    (props.findtext("LeaseState") if props is not None else None),
-                )
+                meta_el = s.find("Metadata")
+                yield {
+                    "share": name,
+                    "snapshot": s.findtext("Snapshot") or None,
+                    "status": props.findtext("LeaseStatus") if props is not None else None,
+                    "state": props.findtext("LeaseState") if props is not None else None,
+                    "duration": props.findtext("LeaseDuration") if props is not None else None,
+                    "metadata": {m.tag: (m.text or "") for m in meta_el} if meta_el is not None else {},
+                }
             marker = root.findtext("NextMarker")
             if not marker:
                 break
@@ -305,6 +349,9 @@ class FileShareRestClient:
             {"comp": "lease", "restype": "share", "sharesnapshot": snapshot},
             {"x-ms-lease-action": "break"},
         )
+
+    def delete_snapshot(self, share, snapshot):
+        self.request("DELETE", f"/{share}", {"restype": "share", "sharesnapshot": snapshot})
 
 
 # =========================
@@ -369,6 +416,7 @@ def read_secret(prompt):
 
 def parse_snapshot_timestamp(s: str) -> datetime:
     """Convert snapshot timestamp string to UTC datetime."""
+    s = s.strip()
     if "." in s:
         base, frac = s.split(".")
         frac = frac.rstrip("Z")[:6]
@@ -378,84 +426,113 @@ def parse_snapshot_timestamp(s: str) -> datetime:
     return dt.replace(tzinfo=timezone.utc)
 
 
+def has_backup_marker(metadata):
+    return any("azurebackup" in k.lower() for k in metadata)
+
+
+def backup_hint(info, share_protected):
+    """Best-effort guess whether Azure Backup holds this snapshot's lease (Azure doesn't expose the lease holder)."""
+    if has_backup_marker(info["metadata"]):
+        return "Yes"
+    if is_leased(info) and share_protected and str(info["duration"] or "").lower() == "infinite":
+        return "Likely"
+    return "-"
+
+
+def is_leased(info):
+    return str(info["status"] or "").lower() == "locked" and str(info["state"] or "").lower() == "leased"
+
+
 def validate_args(args):
     errors = []
     if args.account and not ACCT_RE.fullmatch(args.account):
         errors.append(f"- Invalid storage account name '{args.account}': must be 3–24 lowercase letters/numbers.")
     if args.share and not SHARE_RE.fullmatch(args.share):
         errors.append(f"- Invalid file share name '{args.share}': must be 3–63 chars, lowercase letters/numbers/hyphens, start/end alphanumeric.")
+    if args.share and args.all_shares:
+        errors.append("- Use either --share or --all-shares, not both.")
     if args.days is not None and args.days <= 0:
         errors.append(f"- Invalid cutoff days '{args.days}': must be a positive integer.")
+    if args.snapshot and args.days is not None:
+        errors.append("- Use either --snapshot or --days, not both.")
+    for snap in args.snapshot or []:
+        try:
+            parse_snapshot_timestamp(snap)
+        except ValueError:
+            errors.append(f"- Invalid --snapshot '{snap}': expected a timestamp like 2024-05-01T12:00:00.0000000Z.")
+    if args.report and not args.report.lower().endswith((".csv", ".json")):
+        errors.append("- --report must end in .csv or .json.")
     if errors:
         print("ERROR: Invalid arguments:\n")
         print("\n".join(errors))
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
 
 
-def prompt_missing(auth, account, share, days):
-    if not auth:
+def prompt_missing(args):
+    if not args.auth:
         print("Choose authentication method:")
         print("1) Account Key")
         print("2) Entra ID - Interactive browser (desktop)")
         print("3) Entra ID - Device code (Azure Cloud Shell / headless servers)")
         print("4) Entra ID - Azure CLI login (uses your existing 'az login')")
         while True:
-            auth = input("Enter your choice (1-4): ").strip()
-            if auth in AUTH_LABELS:
+            args.auth = input("Enter your choice (1-4): ").strip()
+            if args.auth in AUTH_LABELS:
                 break
             print("Invalid input. Please enter 1, 2, 3 or 4.")
 
-    while not account:
-        account = input("Enter your Storage Account name: ").strip()
-        if not ACCT_RE.fullmatch(account):
+    while not args.account:
+        args.account = input("Enter your Storage Account name: ").strip()
+        if not ACCT_RE.fullmatch(args.account):
             print("Invalid storage account name. Must be 3–24 lowercase letters & numbers.")
-            account = None
+            args.account = None
 
-    while not share:
-        share = input("Enter the File Share name: ").strip()
-        if not SHARE_RE.fullmatch(share):
+    while not args.share and not args.all_shares:
+        value = input("Enter the File Share name (or * for all shares): ").strip()
+        if value == "*":
+            args.all_shares = True
+        elif SHARE_RE.fullmatch(value):
+            args.share = value
+        else:
             print("Invalid share name. Must be 3–63 chars, lowercase letters/numbers/hyphens, start/end alphanumeric.")
-            share = None
 
-    while days is None:
+    while args.days is None and not args.snapshot:
         try:
-            days = int(input("Enter cutoff days: ").strip())
-            if days <= 0:
+            args.days = int(input("Enter cutoff days: ").strip())
+            if args.days <= 0:
                 print("Cutoff days must be positive.")
-                days = None
+                args.days = None
         except ValueError:
             print("Please enter an integer for cutoff days.")
 
-    return auth, account, share, days
 
-
-def build_client(args, auth, account):
+def build_client(args):
     login_host = LOGIN_HOSTS.get(args.endpoint_suffix, "login.microsoftonline.com")
-    if auth == AUTH_KEY:
-        key = args.key
+    if args.auth == AUTH_KEY:
+        key = args.key or os.environ.get("AZURE_STORAGE_KEY")
         if not key:
             if args.non_interactive:
-                print("ERROR: --key is required when using --auth 1 in non-interactive mode.")
-                sys.exit(1)
+                print("ERROR: --key (or AZURE_STORAGE_KEY) is required when using --auth 1 in non-interactive mode.")
+                sys.exit(EXIT_ERROR)
             key = read_secret("Enter your Storage Account key: ").strip()
             if not key:
                 print("\nERROR: No key was entered. Exiting.\n")
-                sys.exit(1)
+                sys.exit(EXIT_ERROR)
             note = "" if len(key) == 88 else " (Azure account keys are usually 88 characters, please double-check)"
             print(f"Key received: {len(key)} characters{note}.\n")
         try:
-            return FileShareRestClient(account, args.endpoint_suffix, key=key)
+            return FileShareRestClient(args.account, args.endpoint_suffix, key=key, account_url=args.account_url)
         except (ValueError, base64.binascii.Error):
             print("\nERROR: The storage account key is not valid (it should be a base64 string).\n")
-            sys.exit(1)
+            sys.exit(EXIT_ERROR)
 
-    if auth == AUTH_CLI:
+    if args.auth == AUTH_CLI:
         token = get_token_azure_cli(args.tenant)
-    elif auth == AUTH_DEVICE:
+    elif args.auth == AUTH_DEVICE:
         token = get_token_device_code(login_host, args.tenant, args.client_id)
     else:
         token = get_token_browser(login_host, args.tenant, args.client_id)
-    return FileShareRestClient(account, args.endpoint_suffix, token=token)
+    return FileShareRestClient(args.account, args.endpoint_suffix, token=token, account_url=args.account_url)
 
 
 def explain_error(e: AzureError):
@@ -465,17 +542,24 @@ def explain_error(e: AzureError):
         "AuthorizationFailure": "Access denied. The storage account firewall or private endpoint may be blocking your network.",
         "ShareNotFound": "The file share was not found.",
         "InvalidAuthenticationInfo": "The Entra ID token was rejected. Check --tenant (the storage account's tenant).",
+        "LeaseNotPresentWithShareOperation": "The snapshot has no lease (it may have been released already).",
+        "LeaseIdMissing": "The snapshot is still leased. Break its lease first.",
+        "ShareSnapshotNotFound": "The snapshot no longer exists.",
     }
     return hints.get(e.code, f"Azure returned {e.status} {e.code}: {e.message}")
 
 
-def confirm(question, assume_yes, non_interactive):
+def confirm(question, assume_yes, non_interactive, typed_word=None):
     if assume_yes:
         print(f"{question} yes (--yes)")
         return True
     if non_interactive:
         print(f"{question} no (use --yes to confirm in non-interactive mode)")
         return False
+    if typed_word:
+        answer = input(f"{question} Type '{typed_word}' to confirm: ").strip().lower()
+        print()
+        return answer == typed_word
     while True:
         yn = input(f"{question} (y/n): ").strip().lower()
         if yn in ("y", "yes", "n", "no"):
@@ -484,143 +568,250 @@ def confirm(question, assume_yes, non_interactive):
         print("Invalid. Enter 'y', 'yes', 'n' or 'no'.")
 
 
-def is_leased(info):
-    return str(info["status"] or "").lower() == "locked" and str(info["state"] or "").lower() == "leased"
-
-
-def print_snapshot_table(infos):
+def print_snapshot_table(infos, show_share):
     if not infos:
-        print("No snapshots found for this share.")
+        print("No snapshots found.")
         return
-    print(f"{'Snapshot':<35} {'Status':<10} {'State':<10} {'Older?':<6}")
+    share_w = max([5] + [len(i["share"]) for i in infos]) + 2 if show_share else 0
+    header = (f"{'Share':<{share_w}}" if show_share else "") + f"{'Snapshot':<31} {'Status':<9} {'State':<10} {'Older?':<7} {'Backup?':<7}"
+    print(header)
     for i in infos:
-        print(f"{i['snapshot']:<35} {str(i['status'] or '-'):<10} {str(i['state'] or '-'):<10} {'Yes' if i['older'] else 'No':<6}")
+        row = f"{i['share']:<{share_w}}" if show_share else ""
+        row += (f"{i['snapshot']:<31} {str(i['status'] or '-'):<9} {str(i['state'] or '-'):<10} "
+                f"{i['older_label']:<7} {i['backup']:<7}")
+        print(row)
+
+
+def write_report(path, infos, meta):
+    fields = ["share", "snapshot", "lease_status", "lease_state", "lease_duration", "selected", "backup", "action", "result", "error"]
+    rows = [{
+        "share": i["share"], "snapshot": i["snapshot"], "lease_status": i["status"] or "", "lease_state": i["state"] or "",
+        "lease_duration": i["duration"] or "", "selected": i["selected"], "backup": i["backup"],
+        "action": i.get("action", ""), "result": i.get("result", ""), "error": i.get("error", ""),
+    } for i in infos]
+    if path.lower().endswith(".json"):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({**meta, "snapshots": rows}, f, indent=2)
+    else:
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fields)
+            w.writeheader()
+            w.writerows(rows)
+    print(f"📝 Report written to: {os.path.abspath(path)}")
+
+
+def run_action(label, infos, fn):
+    """Run fn(share, snapshot) for each info, recording the result on the info dict."""
+    ok = failed = 0
+    for info in infos:
+        name = f"{info['share']}@{info['snapshot']}"
+        try:
+            fn(info["share"], info["snapshot"])
+            logging.info(f"{label} SUCCESS: {name}")
+            print(f"{label:<13} {name} — SUCCESS")
+            info["result"] = "SUCCESS"
+            ok += 1
+        except AzureError as e:
+            print(f"{label:<13} {name} — FAILED ({explain_error(e)})")
+            info["result"], info["error"] = "FAILED", f"{e.status} {e.code}: {e.message}"
+            failed += 1
+        except Exception as e:
+            logging.error(f"{label} FAILED unexpected: {name} — {e}", exc_info=True)
+            print(f"{label:<13} {name} — FAILED (check logs)")
+            info["result"], info["error"] = "FAILED", str(e)
+            failed += 1
+    return ok, failed
 
 
 # =========================
 # Main
 # =========================
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(
-        description="Azure File Share Snapshot Lease Breaker - lists snapshots of a file share and breaks their leases.",
+        description="Azure File Share Snapshot Lease Breaker - lists file share snapshots, breaks their leases, and optionally deletes them.",
         epilog="Tip: always start with --dry-run to review what would be changed.",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--auth", choices=list(AUTH_LABELS),
                         help="1 = Account Key, 2 = Entra ID browser, 3 = Entra ID device code (Cloud Shell/headless), 4 = Azure CLI login")
     parser.add_argument("--account", help="Storage Account name")
-    parser.add_argument("--key", help="Storage Account Key (only for --auth 1; prefer the secure prompt)")
-    parser.add_argument("--share", help="File Share name")
-    parser.add_argument("--days", type=int, help="Retention cutoff in days")
-    parser.add_argument("--non-interactive", action="store_true", help="Fail if required args are missing; never prompt")
-    parser.add_argument("--dry-run", action="store_true", help="List snapshots but do not break leases")
-    parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompts (required to break leases with --non-interactive)")
-    parser.add_argument("--tenant", default="organizations",
-                        help="Entra ID tenant ID or domain of the storage account (default: your home tenant)")
-    parser.add_argument("--client-id", default=DEFAULT_CLIENT_ID, help=argparse.SUPPRESS)
-    parser.add_argument("--endpoint-suffix", default="core.windows.net",
-                        help="Storage endpoint suffix for sovereign clouds (e.g. core.usgovcloudapi.net, core.chinacloudapi.cn)")
-    args = parser.parse_args()
+    parser.add_argument("--key", help="Storage Account Key (only for --auth 1; prefer the secure prompt or AZURE_STORAGE_KEY)")
+    target = parser.add_argument_group("what to process")
+    target.add_argument("--share", help="File Share name")
+    target.add_argument("--all-shares", action="store_true", help="Process every file share in the storage account")
+    target.add_argument("--days", type=int, help="Select snapshots older than this many days")
+    target.add_argument("--snapshot", action="append", metavar="TIMESTAMP",
+                        help="Select a specific snapshot (repeatable), e.g. 2024-05-01T12:00:00.0000000Z")
+    action = parser.add_argument_group("actions and safety")
+    action.add_argument("--dry-run", action="store_true", help="List snapshots but make no changes")
+    action.add_argument("--delete", action="store_true", help="Also DELETE the selected snapshots after breaking their leases")
+    action.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompts (required to make changes with --non-interactive)")
+    action.add_argument("--non-interactive", action="store_true", help="Fail if required args are missing; never prompt")
+    action.add_argument("--report", metavar="FILE", help="Write a report of all snapshots and results to FILE (.csv or .json)")
+    conn = parser.add_argument_group("connection")
+    conn.add_argument("--tenant", default="organizations",
+                      help="Entra ID tenant ID or domain of the storage account (default: your home tenant)")
+    conn.add_argument("--endpoint-suffix", default="core.windows.net",
+                      help="Storage endpoint suffix for sovereign clouds (e.g. core.usgovcloudapi.net, core.chinacloudapi.cn)")
+    conn.add_argument("--client-id", default=DEFAULT_CLIENT_ID, help=argparse.SUPPRESS)
+    conn.add_argument("--account-url", help=argparse.SUPPRESS)  # testing / custom endpoints
+    return parser
 
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
     log_path = setup_logging()
     validate_args(args)
-    auth, account, share, days = args.auth, args.account, args.share, args.days
 
-    missing = [n for n, v in (("--auth", auth), ("--account", account), ("--share", share), ("--days", days)) if v is None]
+    missing = [n for n, v in (("--auth", args.auth), ("--account", args.account),
+                              ("--share or --all-shares", args.share or args.all_shares),
+                              ("--days or --snapshot", args.days is not None or args.snapshot)) if not v]
     if missing and args.non_interactive:
         print("ERROR: Missing required arguments in non-interactive mode:\n")
         print("\n".join(f"- {m}" for m in missing))
-        sys.exit(1)
+        return EXIT_ERROR
     if missing:
-        auth, account, share, days = prompt_missing(auth, account, share, days)
+        prompt_missing(args)
 
-    print(f"\n🔐 Authentication: {AUTH_LABELS[auth]} | Account: {account} | Share: {share} | Cutoff days: {days}\n")
-    logging.debug(f"Auth={AUTH_LABELS[auth]}; Account={account}; Share={share}; CutoffDays={days}")
+    scope = "all shares" if args.all_shares else args.share
+    selector = f"snapshots: {', '.join(args.snapshot)}" if args.snapshot else f"cutoff days: {args.days}"
+    print(f"\n🔐 Authentication: {AUTH_LABELS[args.auth]} | Account: {args.account} | Share: {scope} | {selector}"
+          f"{' | DELETE enabled' if args.delete else ''}\n")
+    logging.debug(f"v{__version__} Auth={AUTH_LABELS[args.auth]}; Account={args.account}; Share={scope}; {selector}; Delete={args.delete}")
 
     try:
-        client = build_client(args, auth, account)
+        client = build_client(args)
     except RuntimeError as e:
         logging.error(str(e))
         print(f"\n❌ {e}")
         print(f"Detailed log: {log_path}")
-        sys.exit(1)
+        return EXIT_ERROR
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    print(f"🔍 Checking snapshots for '{share}' older than {days} days...\n")
-
+    print(f"🔍 Listing snapshots of {'all shares' if args.all_shares else repr(args.share)}...\n")
     try:
-        infos = [
-            {"snapshot": snap, "status": status, "state": state, "older": parse_snapshot_timestamp(snap) < cutoff}
-            for snap, status, state in client.list_share_snapshots(share)
-        ]
+        entries = list(client.list_snapshots(None if args.all_shares else args.share))
     except AzureError as e:
         print(f"\n❌ Failed to list snapshots. {explain_error(e)}")
         print(f"Detailed log: {log_path}")
-        sys.exit(1)
-    except urllib.error.URLError as e:
+        return EXIT_ERROR
+    except (urllib.error.URLError, socket.timeout, ConnectionError) as e:
         logging.error(f"Network error: {e}", exc_info=True)
-        print(f"\n❌ Could not reach {client.base_url}: {e.reason}")
+        print(f"\n❌ Could not reach {client.base_url}: {getattr(e, 'reason', e)}")
         print("Check the storage account name, your network/proxy, and the storage account firewall.")
         print(f"Detailed log: {log_path}")
-        sys.exit(1)
+        return EXIT_ERROR
 
-    print_snapshot_table(infos)
+    protected_shares = {e["share"] for e in entries if e["snapshot"] is None and has_backup_marker(e["metadata"])}
+    infos = [e for e in entries if e["snapshot"]]
+    if not args.all_shares and not any(e["share"] == args.share for e in entries):
+        print(f"❌ File share '{args.share}' was not found in this storage account.")
+        return EXIT_ERROR
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=args.days) if args.days else None
+    wanted = {parse_snapshot_timestamp(s) for s in (args.snapshot or [])}
+    for i in infos:
+        ts = parse_snapshot_timestamp(i["snapshot"])
+        i["selected"] = (ts in wanted) if args.snapshot else (ts < cutoff)
+        i["older_label"] = ("Picked" if i["selected"] else "-") if args.snapshot else ("Yes" if i["selected"] else "No")
+        i["backup"] = backup_hint(i, i["share"] in protected_shares)
+
+    print_snapshot_table(infos, show_share=args.all_shares)
+    for share in sorted(protected_shares):
+        print(f"\n🛡️  Share '{share}' has Azure Backup metadata. To remove backup snapshots, the recommended way is to change")
+        print("    the retention in the backup policy, or use 'Stop protection and delete data' in the Recovery Services vault.")
+
+    if args.snapshot:
+        found = {parse_snapshot_timestamp(i["snapshot"]) for i in infos}
+        for s in args.snapshot:
+            if parse_snapshot_timestamp(s) not in found:
+                print(f"\n⚠️ Snapshot {s} was not found.")
+
+    meta = {"tool": "afs-snapshot-lease-breaker", "version": __version__, "account": args.account,
+            "share": scope, "days": args.days, "snapshots_requested": args.snapshot or [],
+            "delete": args.delete, "dry_run": args.dry_run, "run_at": datetime.now(timezone.utc).isoformat()}
+
+    def finish(code):
+        if args.report:
+            write_report(args.report, infos, meta)
+        print(f"\nDetailed log: {log_path}")
+        return code
+
+    selected = [i for i in infos if i["selected"]]
+    to_break = [i for i in selected if is_leased(i)]
+    to_delete = list(selected) if args.delete else []
+
+    # Keep the original behaviour: if nothing old is leased, offer to break newer leased snapshots.
+    if not args.snapshot and not args.delete and not to_break:
+        newer = [i for i in infos if not i["selected"] and is_leased(i)]
+        if newer and not args.dry_run:
+            print(f"\n⚠️ No leased snapshots older than cutoff, but {len(newer)} newer snapshot(s) are leased.")
+            if confirm("Break their leases anyway?", args.yes, args.non_interactive):
+                for i in newer:
+                    i["selected"] = True
+                to_break = newer
+
+    for i in to_break:
+        i["action"] = "break-lease"
+    for i in to_delete:
+        i["action"] = "break-lease+delete" if is_leased(i) else "delete"
 
     if args.dry_run:
-        print("\nℹ️ Dry-run mode enabled. No leases were broken.")
-        print(f"\nDetailed log: {log_path}")
-        return
+        for i in to_break + to_delete:
+            i["result"] = "DRY-RUN"
+        print(f"\nℹ️ Dry-run: would break {len(to_break)} lease(s)"
+              f"{f' and delete {len(to_delete)} snapshot(s)' if args.delete else ''}. No changes were made.")
+        return finish(EXIT_OK)
 
-    older_leased = [i for i in infos if i["older"] and is_leased(i)]
-    newer_leased = [i for i in infos if not i["older"] and is_leased(i)]
+    if not to_break and not to_delete:
+        print("\n✅ Nothing to do.")
+        return finish(EXIT_OK)
 
-    if older_leased:
-        print(f"\n⚠️ {len(older_leased)} leased snapshot(s) are older than {days} days.")
+    if to_break:
+        print(f"\n⚠️ {len(to_break)} leased snapshot(s) selected.")
         print("   Leases on share snapshots are typically held by Azure Backup to protect restore points.")
         print("   Breaking a lease allows the snapshot to be deleted.")
-        to_break = older_leased if confirm("Break their leases?", args.yes, args.non_interactive) else []
-    elif newer_leased:
-        print(f"\n⚠️ No leased snapshots older than cutoff, but {len(newer_leased)} newer snapshot(s) are leased.")
-        to_break = newer_leased if confirm("Break their leases anyway?", args.yes, args.non_interactive) else []
-    else:
-        print("\n✅ No leased snapshots to process. Exiting.")
-        print(f"\nDetailed log: {log_path}")
-        return
+        if not confirm("Break their leases?", args.yes, args.non_interactive):
+            for i in to_break + to_delete:
+                i["result"] = "SKIPPED"
+            print("Nothing changed.")
+            return finish(EXIT_OK)
 
-    if not to_break:
-        print("Nothing to do. Exiting.")
-        print(f"\nDetailed log: {log_path}")
-        return
+    if to_delete:
+        print(f"\n🗑️  {len(to_delete)} snapshot(s) will be PERMANENTLY DELETED. This cannot be undone.")
+        if not confirm("Delete them?", args.yes, args.non_interactive, typed_word="delete"):
+            args.delete, to_delete = False, []
+            for i in selected:
+                if i.get("action", "").endswith("delete"):
+                    i["action"] = "break-lease" if is_leased(i) else ""
+            print("Deletion cancelled; leases will still be broken." if to_break else "Nothing changed.")
 
-    succ, fail = [], []
-    for info in to_break:
-        snap = info["snapshot"]
-        try:
-            client.break_lease(share, snap)
-            logging.info(f"SUCCESS: {snap}")
-            print(f"Snapshot {snap} — SUCCESS")
-            succ.append(snap)
-        except AzureError as e:
-            print(f"Snapshot {snap} — FAILED ({explain_error(e)})")
-            fail.append(snap)
-        except Exception as e:
-            logging.error(f"FAILED unexpected: {snap} — {e}", exc_info=True)
-            print(f"Snapshot {snap} — FAILED (check logs)")
-            fail.append(snap)
+    total_failed = 0
+    if to_break:
+        _, failed = run_action("Break lease", to_break, client.break_lease)
+        total_failed += failed
+    if to_delete:
+        # Don't try to delete snapshots whose lease break failed.
+        deletable = [i for i in to_delete if i.get("result") != "FAILED"]
+        for i in to_delete:
+            if i not in deletable:
+                i["error"] = (i.get("error", "") + " | delete skipped because the lease break failed").strip(" |")
+        for i in deletable:
+            i.pop("result", None)
+        _, failed = run_action("Delete", deletable, client.delete_snapshot)
+        total_failed += failed
 
+    done = [i for i in infos if i.get("result")]
     print("\n=== FINAL SUMMARY ===")
-    print(f"{'Snapshot':<35} Result")
-    for s in succ:
-        print(f"{s:<35} SUCCESS")
-    for s in fail:
-        print(f"{s:<35} FAILED")
-    print(f"\n✅ Total succeeded: {len(succ)}")
-    print(f"❌ Total failed: {len(fail)}")
-    print(f"\nDetailed log: {log_path}")
+    for i in done:
+        print(f"{i['share'] + '@' + i['snapshot']:<60} {i['action']:<20} {i['result']}")
+    print(f"\n✅ Succeeded: {sum(1 for i in done if i['result'] == 'SUCCESS')}")
+    print(f"❌ Failed: {sum(1 for i in done if i['result'] == 'FAILED')}")
+    return finish(EXIT_PARTIAL if total_failed else EXIT_OK)
 
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main())
     except KeyboardInterrupt:
         print("\nCancelled.")
         sys.exit(130)
