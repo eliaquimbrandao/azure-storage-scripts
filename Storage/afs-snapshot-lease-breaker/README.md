@@ -16,8 +16,8 @@ Two versions are included. Both do the same job, so pick whichever suits you:
 
 | | PowerShell ([`Break-AfsSnapshotLease.ps1`](Break-AfsSnapshotLease.ps1)) | Python ([`afs-snapshot-break-lease.py`](afs-snapshot-break-lease.py)) |
 |---|---|---|
-| Best for | **Simplest option.** Windows, or Azure Cloud Shell (PowerShell) | macOS, Linux, or automation |
-| Requires | Az.Storage module (already in Cloud Shell) | Python 3.8+ and pip packages |
+| Best for | Windows, or Azure Cloud Shell (PowerShell) | Any OS, including Windows on ARM, macOS, Linux and Cloud Shell |
+| Requires | Az.Storage module (already in Cloud Shell) | **Only Python 3.8+.** No packages to install |
 
 ## PowerShell quick start
 
@@ -51,62 +51,34 @@ Two versions are included. Both do the same job, so pick whichever suits you:
 > On Windows, if you get *"running scripts is disabled"*, run `Set-ExecutionPolicy -Scope Process Bypass` first, then run the script again.
 > Full help: `Get-Help ./Break-AfsSnapshotLease.ps1 -Full`.
 
-## Python quick start (Azure Cloud Shell — nothing to install locally)
+## Python quick start
 
-1. Open [Azure Cloud Shell](https://shell.azure.com) (Bash).
-2. Download the script and install its dependencies:
+The Python script has **no dependencies**. It uses only the Python standard library, so there's nothing to `pip install`. Download the single `.py` file and run it with Python 3.8 or later. It works on Windows (x64, ARM64 and 32-bit), macOS, Linux and Azure Cloud Shell.
 
-    ```bash
-    mkdir afs-lease-breaker && cd afs-lease-breaker
-    BASE=https://raw.githubusercontent.com/eliaquimbrandao/azure-storage-scripts/main/Storage/afs-snapshot-lease-breaker
-    curl -sSLO $BASE/afs-snapshot-break-lease.py -sSLO $BASE/requirements.txt
-    python3 -m venv .venv && source .venv/bin/activate
-    python -m pip install -r requirements.txt
-    ```
-
-    > Cloud Shell sessions time out. Next time, `cd afs-lease-breaker && source .venv/bin/activate` before running the script.
-
-3. Preview what the script would do. Nothing is changed:
-
-    ```bash
-    python afs-snapshot-break-lease.py --dry-run --auth 4 --account <storage_account> --share <file_share> --days 30
-    ```
-
-4. Run it for real. You'll be asked to confirm before any lease is broken:
-
-    ```bash
-    python afs-snapshot-break-lease.py --auth 4 --account <storage_account> --share <file_share> --days 30
-    ```
-
-> `--auth 4` reuses your Cloud Shell sign-in. If that fails, use `--auth 3` (device code) or `--auth 1` (account key).
-> Your identity needs the roles listed under [Permissions](#permissions).
-> If the storage account blocks public network access or uses a firewall, Cloud Shell won't be able to reach it. In that case, run the script from a machine that is allowed on the storage account's network.
-
-## Python quick start (your own machine)
-
-Requires Python 3.8 or later.
-
-**macOS / Linux**
+**Azure Cloud Shell (Bash)** — open [shell.azure.com](https://shell.azure.com):
 
 ```bash
-git clone https://github.com/eliaquimbrandao/azure-storage-scripts.git
-cd azure-storage-scripts/Storage/afs-snapshot-lease-breaker
-python3 -m venv .venv && source .venv/bin/activate
-python -m pip install -r requirements.txt
-python afs-snapshot-break-lease.py --dry-run
+curl -sSLO https://raw.githubusercontent.com/eliaquimbrandao/azure-storage-scripts/main/Storage/afs-snapshot-lease-breaker/afs-snapshot-break-lease.py
+python3 afs-snapshot-break-lease.py --dry-run --auth 4 --account <storage_account> --share <file_share> --days 30
 ```
+
+`--auth 4` reuses your Cloud Shell sign-in. If the storage account blocks public network access or uses a firewall, Cloud Shell can't reach it. In that case, run the script from a machine on an allowed network.
 
 **Windows (PowerShell)**
 
 ```powershell
-git clone https://github.com/eliaquimbrandao/azure-storage-scripts.git
-cd azure-storage-scripts\Storage\afs-snapshot-lease-breaker
-py -3 -m venv .venv; .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python afs-snapshot-break-lease.py --dry-run
+Invoke-WebRequest https://raw.githubusercontent.com/eliaquimbrandao/azure-storage-scripts/main/Storage/afs-snapshot-lease-breaker/afs-snapshot-break-lease.py -OutFile afs-snapshot-break-lease.py
+py afs-snapshot-break-lease.py --dry-run
 ```
 
-No Git? Download `afs-snapshot-break-lease.py` and `requirements.txt` from this folder, then run the same commands, starting from the `venv` step.
+**macOS / Linux**
+
+```bash
+curl -sSLO https://raw.githubusercontent.com/eliaquimbrandao/azure-storage-scripts/main/Storage/afs-snapshot-lease-breaker/afs-snapshot-break-lease.py
+python3 afs-snapshot-break-lease.py --dry-run
+```
+
+When you're happy with the dry-run output, run the same command without `--dry-run`. You'll be asked to confirm before any lease is broken.
 
 If you run it with no arguments, the script asks for everything it needs: the sign-in method, storage account, file share and cutoff in days.
 
@@ -133,6 +105,7 @@ The script **does not delete snapshots**. It only breaks leases. After that, you
 | `--dry-run` | Only list the snapshots and their lease state. Makes no changes |
 | `--yes`, `-y` | Skip the confirmation prompt |
 | `--non-interactive` | Never prompt: fail if a required value is missing. Leases are broken only if `--yes` is also given |
+| `--tenant <id or domain>` | Entra ID tenant of the storage account. Needed if your account belongs to several tenants, or you're a guest user |
 | `--endpoint-suffix <suffix>` | For sovereign clouds, for example `core.usgovcloudapi.net` or `core.chinacloudapi.cn`. Default: `core.windows.net` |
 
 ### Automation example
@@ -145,16 +118,16 @@ python afs-snapshot-break-lease.py --non-interactive --yes --auth 4 --account <s
 
 | Method | When to use |
 |---|---|
-| `4` Azure CLI | Recommended in **Azure Cloud Shell**, or anywhere you have already run `az login` |
-| `3` Device code | Cloud Shell, SSH sessions or servers without a browser. Shows a code to enter at https://microsoft.com/devicelogin |
-| `2` Interactive browser | Desktop machines with a browser |
+| `4` Azure CLI | Recommended in **Azure Cloud Shell**, or anywhere you have already run `az login`. Requires the Azure CLI |
+| `3` Device code | Servers without a browser or SSH sessions. Shows a code to enter at https://microsoft.com/devicelogin. Some organisations block device code sign-in with Conditional Access |
+| `2` Interactive browser | Desktop machines. Opens your browser to sign in, like `az login` does |
 | `1` Account key | When Entra ID isn't possible. Enter the key at the secure prompt. Avoid `--key`, because it ends up in your shell history and the process list |
 
 Entra ID (options 2–4) is recommended over account keys.
 
 ## Permissions
 
-The script uses three operations: *List Shares*, *Get Share Properties* and *Lease Share* (break).
+The script uses two Azure Files REST operations: *List Shares* (including snapshots and their lease state) and *Lease Share* (break).
 
 **Account key (`--auth 1`)** — the key grants full access to the storage account. To read the key in the portal or CLI, you need `Microsoft.Storage/storageAccounts/listKeys/action`, which is included in **Storage Account Contributor**.
 
@@ -162,7 +135,7 @@ The script uses three operations: *List Shares*, *Get Share Properties* and *Lea
 
 | Permission | Used for |
 |---|---|
-| `Microsoft.Storage/storageAccounts/fileServices/shares/read` | List Shares, Get Share Properties |
+| `Microsoft.Storage/storageAccounts/fileServices/shares/read` | List Shares |
 | `Microsoft.Storage/storageAccounts/fileServices/shares/lease/action` | Break the lease |
 
 These are **management (control-plane) actions**, not data actions. Data roles such as *Storage File Data Privileged Contributor* don't include them, so that role alone isn't enough. Assign one of:
@@ -172,7 +145,7 @@ These are **management (control-plane) actions**, not data actions. Data roles s
 
 Also assign **Storage File Data Privileged Contributor** on the same storage account. Microsoft's guidance for Azure Files OAuth over REST asks for a data role alongside the management permissions, and having it avoids `403` errors.
 
-Entra ID access to share-level operations requires Azure Files REST API version `2024-11-04` or later. `requirements.txt` pins `azure-storage-file-share>=12.18.0`, which is the first release that uses it.
+Entra ID access to share-level operations requires Azure Files REST API version `2024-11-04` or later. The script uses that version.
 Role assignments can take a few minutes to apply.
 
 References: [Permissions for calling Azure Files operations](https://learn.microsoft.com/rest/api/storageservices/authorize-with-azure-active-directory#permissions-for-calling-data-operations) · [Azure Files OAuth over REST](https://learn.microsoft.com/azure/storage/files/authorize-oauth-rest)
@@ -213,9 +186,10 @@ Detailed log: /home/user/snapshot-lease-breaker/error-log.20240622_143000.log
 | `File share '<name>' was not found` | Check the storage account and share names. Both are lowercase |
 | `Authentication failed` | Try a different `--auth` method. In Cloud Shell, use `4` or `3` |
 | `AuthorizationPermissionMismatch` / `403` | The identity is missing a permission. See [Permissions](#permissions). A firewall or private endpoint can also block you: your IP or network must be allowed |
-| pip stuck on `Preparing metadata` (Windows) | You're probably on **Windows on ARM** or 32-bit Python. `cryptography`, a dependency of `azure-identity`, only has ready-made Windows builds for x64, so pip tries to compile it. Install the **64-bit (x64)** Python from python.org (it runs on ARM through emulation), then recreate the venv with it: `py -V:3.13 -m venv .venv`. Use `pip install --only-binary=:all: -r requirements.txt` to fail fast instead of compiling |
-| `externally-managed-environment` from pip | Use a virtual environment (`python3 -m venv .venv`), as shown in the quick start |
-| `ModuleNotFoundError` | Run `python -m pip install -r requirements.txt`. On a very new Python release, use the latest version the Azure SDK supports |
+| `Could not reach https://<account>.file...` | Check the account name and your network. If you're behind a proxy, set `HTTPS_PROXY` |
+| `CERTIFICATE_VERIFY_FAILED` (macOS, python.org installer) | Run *Install Certificates.command* from your Python folder in Applications |
+| `Azure CLI ('az') not found` | Install the Azure CLI, or use `--auth 2` or `3` |
+| `InvalidAuthenticationInfo` with Entra ID | The storage account is in another tenant. Add `--tenant <tenant-id>` |
 | Lease break `FAILED` | See the log file for the exact error |
 
 **Log location:** `~/snapshot-lease-breaker/` on macOS/Linux, `%APPDATA%\snapshot-lease-breaker\` on Windows.

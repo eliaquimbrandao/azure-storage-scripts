@@ -1,3 +1,2 @@
-azure-storage-file-share>=12.18.0
-azure-identity>=1.15.0
-azure-core>=1.28.0
+# No third-party dependencies: the script uses only the Python standard library.
+# This file is kept so that "pip install -r requirements.txt" from older instructions still works.
